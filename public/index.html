@@ -3,18 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#173d32">
-  <meta name="description" content="A private place for our family's Secret Santa, wish lists, and holiday surprises.">
-  <title>Family Secret Santa</title>
+  <meta name="theme-color" content="#536348">
+  <meta name="description" content="Private Secret Santa wish lists.">
+  <title>Secret Santa</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">✧</span> Secret Santa<span class="brand-note">a family tradition</span></a><nav aria-label="Main"><a href="/admin" class="organizer-link">Organizer</a><button id="logout" class="quiet" hidden>Sign out</button></nav></header>
-  <main id="app" tabindex="-1"><p class="loading">Getting things ready…</p></main>
+  <header class="topbar"><a class="brand" href="/"><img src="/favicon.svg" alt="" width="24" height="24"> Secret Santa</a><nav aria-label="Main"><a href="/admin" class="organizer-link">Organizer</a><button id="logout" class="quiet" hidden>Sign out</button></nav></header>
+  <main id="app" tabindex="-1"><p class="loading">Loading…</p></main>
   <div id="notice" role="status" aria-live="polite" hidden></div>
   <dialog id="dialog"><div id="dialog-content"></div><button type="button" id="close-dialog" class="quiet">Close</button></dialog>
-  <footer><span>Good gifts. Great company. A little mystery.</span><span class="footer-star" aria-hidden="true">✦</span><span>Made for our family.</span></footer>
 </body>
 </html>
