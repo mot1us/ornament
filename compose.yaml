@@ -1,0 +1,56 @@
+services:
+  secret-santa:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      DATA_DIR: /data
+      COOKIE_SECURE: "true"
+      TRUST_PROXY_HOPS: "1"
+    expose:
+      - "3080"
+    volumes:
+      - santa_data:/data
+      - santa_backups:/backups
+    networks:
+      - pangolin_frontend
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  secret-santa-backup:
+    build: .
+    restart: unless-stopped
+    command: ["node", "scripts/backup-loop.js"]
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - santa_data:/data:ro
+      - santa_backups:/backups
+    depends_on:
+      secret-santa:
+        condition: service_healthy
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      disable: true
+
+volumes:
+  santa_data:
+  santa_backups:
+
+networks:
+  pangolin_frontend:
+    external: true

@@ -1,0 +1,9 @@
+.git
+.github
+.env
+node_modules
+data
+backups
+test
+*.sqlite*
+*.log
