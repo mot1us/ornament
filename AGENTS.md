@@ -4,6 +4,11 @@ Develop locally, run the required checks, then commit and push the requested
 changes to the configured GitHub remote. This workflow is authorized by the
 user. Keep unrelated changes out of commits and do not force-push.
 
+Increment the app version for every completed requested update, including UI,
+documentation, and instruction changes. Default to a patch increment. Keep
+package.json and package-lock.json in sync, add a concise CHANGELOG.md entry,
+and include the version in the delivery commit message and final response.
+
 Run `npm run check` and `npm test` for application changes. Use generic fixtures
 in tests. Verify the interface in the local browser when changing user flows.
 

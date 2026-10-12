@@ -28,7 +28,7 @@ and share personal links. Email starts in preview mode.
 Use [Docker + HTTPS on your VPS](docs/vps.md). Keep credentials, family records,
 and backups outside Git. This repository contains code only.
 
-[Import history](docs/history.md) · [App behavior](docs/behavior.md)
+[Import history](docs/history.md) · [App behavior](docs/behavior.md) · [Changelog](CHANGELOG.md)
 
 ## Check changes
 
