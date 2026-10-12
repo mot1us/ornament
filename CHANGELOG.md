@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- Rename Docker services to `ornament` and `ornament-backup`, with routing to
+  `ornament:3080`.
+- Preserve existing data and backup volumes and document the stack upgrade.
+
 ## 0.1.4
 
 - Publish checked Docker images for AMD64 and ARM64 to GitHub Container Registry.

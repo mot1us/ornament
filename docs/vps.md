@@ -33,7 +33,7 @@ The Compose file uses explicit environment variables, following the
 ## Pangolin
 
 The external Docker network `pangolin_frontend` must already exist. Route your
-hostname to `secret-santa:3080` on that network and enable HTTPS. No app port is
+hostname to `ornament:3080` on that network and enable HTTPS. No app port is
 published directly on the VPS.
 
 Family links use Ornament's own authentication. Leave the family routes
@@ -83,6 +83,12 @@ image tags in Dockhand's Compose editor to that release and deploy. Keep the
 volumes. Use a published digest instead of a tag if you want an immutable pin.
 Avoid `latest` and automatic deployment.
 
+When upgrading from 0.1.4, stop the existing stack first. Replace its Compose
+file with this release, retain the saved environment settings, and redeploy
+with orphan removal enabled. This replaces the old service containers while
+retaining `santa_data` and `santa_backups`. Set the Pangolin target to
+`ornament:3080`. For CLI upgrades, use `docker compose up -d --remove-orphans`.
+
 To restore, stop both containers, preserve the existing volume, and copy a
 checked snapshot into a fresh data volume as `secret-santa.sqlite`, owned by
 UID/GID 1000. Omit old `-wal` and `-shm` files. Restart and verify history,
@@ -97,7 +103,7 @@ cd ornament
 cp .env.example .env
 chmod 600 .env
 docker compose pull
-docker compose run --rm --no-deps secret-santa node scripts/password.js
+docker compose run --rm --no-deps ornament node scripts/password.js
 # Add the generated hash, HTTPS PUBLIC_URL, and EMAIL_MODE=preview to .env.
 docker compose up -d
 ```
