@@ -8,9 +8,10 @@ gateway. Choose a new HTTPS hostname for the family site before deploying.
 Clone the GitHub repository on the VPS into a dedicated stack directory:
 
 ```sh
-git clone https://github.com/mot1us/secret-santa.git
-cd secret-santa
+git clone https://github.com/mot1us/ornament.git
+cd ornament
 cp .env.example .env
+chmod 600 .env
 ```
 
 Generate a new organizer password hash with Node 24+ or using the application
@@ -55,7 +56,7 @@ has no network access. SQLite lives in `santa_data`, and backups in
 ## Bring over history
 
 Transfer the history files privately to the VPS; never commit them to GitHub.
-Use **Past years** in the organizer dashboard, or stop the main container and
+Use **History** in the organizer dashboard, or stop the main container and
 mount a private import directory for the CLI:
 
 ```sh
@@ -96,7 +97,7 @@ docker compose up -d --force-recreate secret-santa
 ```
 
 Messages prepared in preview mode must be explicitly queued again before real
-sending. Verify addresses and previews in **Emails** first. Never use the real
+sending. Verify addresses and previews in **Email** first. Never use the real
 family list for deployment smoke tests.
 
 ## Backup and recovery

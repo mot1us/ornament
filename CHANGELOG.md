@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Update VPS setup instructions for the renamed mot1us/ornament repository.
+- Set private permissions on the VPS environment file during setup.
+
 ## 0.1.1
 
 - Require a version bump and changelog entry for every completed update.
