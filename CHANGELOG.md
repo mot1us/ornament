@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Send a first wish list to Santa, show a clear confirmation, and keep Edit wish list with Save changes for later updates.
+
 ## 0.4.0
 
 - Redesign family wish lists as vintage Christmas cards, with a finished saved view and explicit edit/cancel actions.

@@ -1,6 +1,6 @@
 const app=document.querySelector('#app');
 const dialog=document.querySelector('#dialog');
-let session=null, state=null, tab='people', selectedYear=null, member=null, group=null, revealed=false, familyEditing=false;
+let session=null, state=null, tab='people', selectedYear=null, member=null, group=null, revealed=false, familyEditing=false, familyUpdated=false;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const personName=id=>state.people.find(p=>p.id===id)?.name||'Unknown person';
 const badge=(label,style='')=>`<span class="badge ${style}">${esc(label)}</span>`;
@@ -85,9 +85,10 @@ function giftLinks(gifts=[]) {
 function familyHeading(e,title,description,saved=false) {
   return `<header class="family-heading"><p class="eyebrow">${esc(e.title)}</p>${saved?'<span class="saved-seal" aria-hidden="true">✓</span>':''}<h1 tabindex="-1">${title}</h1><p class="family-intro">${description}</p><img class="family-toys" src="/holiday-clay.png" alt="Santa, a little reindeer, and a silver tinsel tree" width="360" height="240">${e.budget||e.eventDate?`<div class="exchange-details">${e.budget?`<span><small>Gift budget</small>${esc(e.budget)}</span>`:''}${e.eventDate?`<span><small>Celebrating on</small>${esc(e.eventDate)}</span>`:''}</div>`:''}</header>`;
 }
+const wishListSubmitted=(p,type)=>type==='group-wishlist'?!!p:!!(p?.wishlist||p?.gifts?.length);
 function wishListForm(p,type,{identity=false,approved=false}={}) {
-  const saved=type==='group-wishlist'?!!p:!!(p?.wishlist||p?.gifts?.length);
-  return `<form data-form="${type}" class="family-card wishlist-form">${identity?`<fieldset class="form-section"><legend>Your details</legend><div class="form-row"><label>Name<input name="name" autocomplete="name" required maxlength="80" value="${esc(p?.name||'')}" ${approved?'readonly':''}></label><label>Email<input name="email" type="email" autocomplete="email" inputmode="email" required maxlength="254" value="${esc(p?.email||'')}" ${approved?'readonly':''}></label></div><p class="field-hint">This is where your match will arrive.</p></fieldset>`:''}<fieldset class="form-section"><legend>What would you love?</legend><label class="sr-only" for="wishlist">Wish list</label><textarea id="wishlist" name="wishlist" rows="4" maxlength="5000" placeholder="A few gift ideas, your size, favorite colors…">${esc(p?.wishlist||'')}</textarea>${giftFields(p?.gifts)}</fieldset><details class="message-details" ${p?.message?'open':''}><summary>A note for your Secret Santa <span class="optional">optional</span></summary><label class="sr-only" for="gifter-message">Message to your gifter</label><textarea id="gifter-message" class="gifter-message" name="message" rows="3" maxlength="2000" placeholder="Anything else they should know?">${esc(p?.message||'')}</textarea></details><p class="form-error" data-form-error role="alert" tabindex="-1" hidden></p><div class="family-actions"><button type="submit" class="primary">${saved?'Save changes':'Save wish list'} <span aria-hidden="true">→</span></button>${saved?'<button type="button" class="quiet" data-action="cancel-wishlist">Cancel</button>':''}</div><p class="family-footnote">${type==='group-wishlist'?'Your organizer reviews your list before the draw.':'Your gifter sees your latest saved list.'}</p></form>`;
+  const saved=wishListSubmitted(p,type);
+  return `<form data-form="${type}" class="family-card wishlist-form">${identity?`<fieldset class="form-section"><legend>Your details</legend><div class="form-row"><label>Name<input name="name" autocomplete="name" required maxlength="80" value="${esc(p?.name||'')}" ${approved?'readonly':''}></label><label>Email<input name="email" type="email" autocomplete="email" inputmode="email" required maxlength="254" value="${esc(p?.email||'')}" ${approved?'readonly':''}></label></div><p class="field-hint">This is where your match will arrive.</p></fieldset>`:''}<fieldset class="form-section"><legend>What would you love?</legend><label class="sr-only" for="wishlist">Wish list</label><textarea id="wishlist" name="wishlist" rows="4" maxlength="5000" placeholder="A few gift ideas, your size, favorite colors…">${esc(p?.wishlist||'')}</textarea>${giftFields(p?.gifts)}</fieldset><details class="message-details" ${p?.message?'open':''}><summary>A note for your Secret Santa <span class="optional">optional</span></summary><label class="sr-only" for="gifter-message">Message to your gifter</label><textarea id="gifter-message" class="gifter-message" name="message" rows="3" maxlength="2000" placeholder="Anything else they should know?">${esc(p?.message||'')}</textarea></details><p class="form-error" data-form-error role="alert" tabindex="-1" hidden></p><div class="family-actions"><button type="submit" class="primary">${saved?'Save changes':'Send to Santa'} <span aria-hidden="true">→</span></button>${saved?'<button type="button" class="quiet" data-action="cancel-wishlist">Cancel</button>':''}</div><p class="family-footnote">${type==='group-wishlist'?'Your organizer reviews your list before the draw.':'Your gifter sees your latest saved list.'}</p></form>`;
 }
 function wishListSummary(p,{editable=true,identity=true}={}) {
   return `<section class="family-card saved-wishlist" aria-label="Your saved wish list"><div class="saved-card-heading"><div><p class="eyebrow">Your wish list</p>${identity?`<h2>${esc(p.name)}</h2>${p.email?`<p class="saved-email">${esc(p.email)}</p>`:''}`:''}</div>${editable?'<button class="secondary" data-action="edit-wishlist">Edit wish list</button>':''}</div>${p.wishlist?`<div class="saved-section"><h3>Gift ideas</h3><p class="wishlist-text">${esc(p.wishlist)}</p></div>`:''}${p.gifts?.length?`<div class="saved-section"><h3>Gifts &amp; links</h3>${giftLinks(p.gifts)}</div>`:''}${p.message?`<div class="saved-section saved-message"><h3>A note for your Secret Santa</h3><p class="wishlist-text">${esc(p.message)}</p></div>`:''}<p class="family-footnote">You can close this page.${editable?' Come back on this device to edit.':''}</p></section>`;
@@ -99,7 +100,7 @@ function renderGroup() {
   const declined=p?.status==='rejected';
   const closed=declined||e.state==='archived'||(!approved&&!['open','drafted'].includes(e.state));
   const editing=(!p||familyEditing)&&!closed;
-  const title=declined?'Check with your organizer.':closed?'Wish lists are closed.':editing?'Your Christmas<br>wish list.':'Wish list saved.';
+  const title=declined?'Check with your organizer.':closed?'Wish lists are closed.':editing?'Your Christmas<br>wish list.':familyUpdated?'Changes saved.':'Sent to Santa.';
   const description=declined?'Your list wasn’t approved. Ask your organizer about the details.':closed?'Contact your organizer if you need to make a change.':editing?'Gift ideas, useful links, and a note for your Secret Santa.':approved?'You’re all set. Your match will arrive by email after the draw.':'Your organizer will review your list. Your match will arrive by email after the draw.';
   app.innerHTML=`<section class="family-page">${familyHeading(e,title,description,!!p&&!editing&&!closed)}<div class="family-content">${editing?wishListForm(p,'group-wishlist',{identity:true,approved}):p?wishListSummary(p,{editable:!closed}):'<div class="family-card"><p>No wish list has been submitted.</p></div>'}</div></section>`;
 }
@@ -118,7 +119,7 @@ function renderMember() {
   const editable=e.state!=='archived'&&p.active;
   const editing=editable&&(familyEditing||(!p.wishlist&&!p.gifts.length));
 
-  app.innerHTML=`<section class="family-page">${familyHeading(e,editing?'Your Christmas<br>wish list.':'Wish list saved.',!p.active?'You’re sitting out this year.':editing?'Gift ideas, useful links, and a note for your Secret Santa.':r?'Your match is ready. Your own wish list is below.':'Your wish list is saved. Your match will arrive after the draw.',!editing&&!!(p.wishlist||p.gifts.length))}<div class="family-content">${recipientCard(r)}${editing?wishListForm(p,'wishlist'):wishListSummary(p,{editable})}</div></section>`;
+  app.innerHTML=`<section class="family-page">${familyHeading(e,editing?'Your Christmas<br>wish list.':wishListSubmitted(p,'wishlist')?(familyUpdated?'Changes saved.':'Sent to Santa.'):'Your wish list.',!p.active?'You’re sitting out this year.':editing?'Gift ideas, useful links, and a note for your Secret Santa.':r?'Your match is ready. Your own wish list is below.':'Your wish list is saved. Your match will arrive after the draw.',!editing&&!!(p.wishlist||p.gifts.length))}<div class="family-content">${recipientCard(r)}${editing?wishListForm(p,'wishlist'):wishListSummary(p,{editable})}</div></section>`;
 }
 function renderFamily() {if(session?.role==='member')renderMember();else renderGroup();}
 function formGifts(form) {
@@ -194,7 +195,8 @@ document.addEventListener('submit',async event=>{
   const button=form.querySelector('button[type="submit"], button:not([type])');
   working=true;if(button)button.disabled=true;
   const familyForm=['group-wishlist','wishlist'].includes(type),buttonText=button?.innerHTML;
-  if(familyForm&&button)button.textContent='Saving…';
+  const alreadySubmitted=familyForm&&wishListSubmitted(type==='group-wishlist'?group?.submission:member?.person,type);
+  if(familyForm&&button)button.textContent=alreadySubmitted?'Saving…':'Sending…';
   try {
     if(type==='email-sign-in'){
       const result=await api('/sign-in',{email:values.email});
@@ -226,12 +228,12 @@ document.addEventListener('submit',async event=>{
       if(!values.wishlist.trim()&&!gifts.length)throw new Error('Add a wish list or a gift idea.');
       session=await api('/group/profile',{name:values.name,email:values.email,wishlist:values.wishlist,message:values.message,gifts});
       document.querySelector('#logout').hidden=false;
-      group=await api('/group/profile');familyEditing=false;renderGroup();focusFamilyHeading();return;
+      group=await api('/group/profile');familyUpdated=alreadySubmitted;familyEditing=false;renderGroup();focusFamilyHeading();return;
     }
     if(type==='wishlist'){
       const gifts=formGifts(form);
       if(!values.wishlist.trim()&&!gifts.length)throw new Error('Add a wish list or a gift idea.');
-      await api('/member/profile',{wishlist:values.wishlist,message:values.message,gifts});member=await api('/member/profile');familyEditing=false;renderMember();focusFamilyHeading();return;
+      await api('/member/profile',{wishlist:values.wishlist,message:values.message,gifts});member=await api('/member/profile');familyUpdated=alreadySubmitted;familyEditing=false;renderMember();focusFamilyHeading();return;
     }
     dialog.close();await loadAdmin();notice('Saved.');
   }catch(error){
