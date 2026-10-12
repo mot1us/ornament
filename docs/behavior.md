@@ -39,7 +39,15 @@ The personal page shows the recipient's latest saved wish list. Existing
 prepared messages remain unchanged by later wish-list edits.
 
 Organizer authentication uses a server-side session and scrypt password hash.
-Family tokens are random and hashed in SQLite. Secure HttpOnly SameSite cookies,
+The shared homepage sends a sign-in link only to a known, active participant in
+the latest open, drafted, or finalized exchange. Responses do not disclose
+whether an email is on the roster. Each person needs a separate email address.
+Email sign-in tokens are random and hashed in SQLite, work once, and expire in
+15 minutes. Requests are limited by IP and by email, with email limits surviving
+restarts. Sign-in delivery never sends prepared invitation or assignment batches;
+failed or uncertain links are not retried automatically. Request a new link.
+Existing organizer-issued personal links remain valid and can be revoked, along
+with email sign-in links and sessions. Secure HttpOnly SameSite cookies,
 CSRF tokens, origin checks, and a restrictive content security policy protect
 browser requests. Family API responses contain only the person's own wish list
 and the name, wish list, and gift ideas of their recipient after finalization.

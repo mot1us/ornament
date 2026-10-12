@@ -3,9 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { openDatabase, audit, getExchange, members, transaction, importHistory } from './database.js';
 import { createExchange, savePerson, emailValid, matchingOptions, historyReadiness, mutable, invalidateDraft, draftDraw,
-  lockDraw, inviteLink, giftList, prepareMail } from './service.js';
+  lockDraw, inviteLink, giftList, prepareMail, normalizeEmail, checkEmailIdentity } from './service.js';
 import { secret, hash, passwordMatches, readConfig } from './security.js';
 import { createMailer } from './mail.js';
+import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
 
 export function createApp(config,db,providedTransport) {
   const app = express();
@@ -29,7 +30,7 @@ export function createApp(config,db,providedTransport) {
   app.use('/api',(req,res,next)=>{
     const value = (req.headers.cookie || '').split(';').map(p=>p.trim()).find(p=>p.startsWith('santa_session='))?.slice(14);
     req.session = value && db.prepare('SELECT * FROM sessions WHERE hash=? AND expires>?').get(hash(value),Date.now());
-    if (req.session && ['POST','PUT','PATCH','DELETE'].includes(req.method) && !['/login','/redeem'].includes(req.path)) {
+    if (req.session && ['POST','PUT','PATCH','DELETE'].includes(req.method) && !['/login','/redeem','/sign-in'].includes(req.path)) {
       if (req.get('x-csrf-token') !== req.session.csrf) return res.status(403).json({error:'Refresh the page and try again.'});
     }
     next();
@@ -45,7 +46,7 @@ export function createApp(config,db,providedTransport) {
     return {role,csrf,year};
   };
   function limiter(req,res,next) {
-    const now = Date.now(), key = req.ip || req.socket.remoteAddress || 'unknown';
+    const now = Date.now(), key = `${req.route.path}:${req.ip || req.socket.remoteAddress || 'unknown'}`;
     for (const [ip,entry] of attempts) if (entry.until < now) attempts.delete(ip);
     if (!attempts.has(key) && attempts.size >= 1000) return res.status(429).json({error:'Too many login requests. Try again later.'});
     const entry = attempts.get(key) || {count:0,until:now+15*60000};
@@ -58,11 +59,28 @@ export function createApp(config,db,providedTransport) {
     if (req.session) db.prepare('DELETE FROM sessions WHERE hash=?').run(req.session.hash);
     res.json(makeSession(res,'admin'));
   });
+  app.post('/api/sign-in',limiter,(req,res)=>{
+    const mode=config.emailMode==='preview'?'preview':mailer.ready?'email':'unavailable';
+    const id=mode==='unavailable'?null:prepareSignIn(db,config,req.body.email);
+    // Respond before SMTP to keep timing and responses independent of roster membership.
+    res.status(202).json({ok:true,mode});
+    if (id) mailer.deliverSignIn(id).catch(()=>{
+      // Do not log addresses, message bodies, links, or provider credentials.
+      console.error('Could not deliver an Ornament sign-in email. Check the organizer email records.');
+    });
+  });
   app.post('/api/redeem',limiter,(req,res)=>{
     const token = typeof req.body.token==='string' ? req.body.token : '';
-    const invite = token.length===43 && db.prepare('SELECT * FROM invite_tokens WHERE hash=? AND expires>?').get(hash(token),Date.now());
-    if (!invite) return res.status(401).json({error:'This link is invalid or expired. Ask the organizer for a new one.'});
-    res.json(makeSession(res,'member',invite.person_id,invite.year));
+    if (token.length!==43) return res.status(401).json({error:'This link is invalid or expired. Request a new link from the homepage.'});
+    const result=transaction(db,()=>{
+      const tokenHash=hash(token);
+      const invite=consumeSignIn(db,tokenHash) || db.prepare('SELECT * FROM invite_tokens WHERE hash=? AND expires>?').get(tokenHash,Date.now());
+      if (!invite) return null;
+      if (req.session) db.prepare('DELETE FROM sessions WHERE hash=?').run(req.session.hash);
+      return makeSession(res,'member',invite.person_id,invite.year);
+    });
+    if (!result) return res.status(401).json({error:'This link is invalid or expired. Request a new link from the homepage.'});
+    res.json(result);
   });
   app.get('/api/session',(req,res)=>{
     if (!req.session) return res.status(401).json({error:'Please sign in.'});
@@ -77,6 +95,7 @@ export function createApp(config,db,providedTransport) {
     next();
   });
   app.get('/api/admin/state',(req,res)=>{
+    expireSignIns(db);
     const exchanges = db.prepare('SELECT * FROM exchanges ORDER BY year DESC').all();
     const year = Number(req.query.year || exchanges[0]?.year);
     const exchange = exchanges.find(e=>e.year===year) || null;
@@ -132,11 +151,13 @@ export function createApp(config,db,providedTransport) {
   });
   app.post('/api/admin/people',(req,res)=>{res.json({id:savePerson(db,Number(req.body.year),req.body)});});
   app.post('/api/admin/contact',(req,res)=>{
-    const year=Number(req.body.year),id=req.body.id,email=String(req.body.email||'').trim();
+    const year=Number(req.body.year),id=req.body.id,email=normalizeEmail(req.body.email);
     if(!emailValid(email)||!db.prepare('SELECT person_id FROM enrollments WHERE year=? AND person_id=?').get(year,id))throw new Error('Choose an existing person and enter a valid email address.');
+    checkEmailIdentity(db,email,id);
     transaction(db,()=>{
       db.prepare('UPDATE people SET email=? WHERE id=?').run(email,id);
-      db.prepare("UPDATE outbox SET recipient_email=? WHERE year=? AND giver=? AND status IN ('pending','failed','preview')").run(email,year,id);
+      db.prepare('DELETE FROM sign_in_tokens WHERE person_id=? AND email<>?').run(id,email);
+      db.prepare("UPDATE outbox SET recipient_email=? WHERE year=? AND giver=? AND kind IN ('invite','assignment') AND status IN ('pending','failed','preview')").run(email,year,id);
       audit(db,'correct-contact',{year,id});
     });res.json({ok:true});
   });
@@ -164,6 +185,7 @@ export function createApp(config,db,providedTransport) {
     const year = Number(req.body.year);
     transaction(db,()=>{
       db.prepare('DELETE FROM invite_tokens WHERE year=? AND person_id=?').run(year,req.body.personId);
+      db.prepare('DELETE FROM sign_in_tokens WHERE year=? AND person_id=?').run(year,req.body.personId);
       db.prepare("DELETE FROM sessions WHERE role='member' AND year=? AND person_id=?").run(year,req.body.personId);
       audit(db,'revoke-links',{year,personId:req.body.personId});
     });res.json({ok:true});
@@ -177,6 +199,7 @@ export function createApp(config,db,providedTransport) {
   });
   app.post('/api/admin/mail/retry',(req,res)=>{
     const row = db.prepare('SELECT * FROM outbox WHERE id=?').get(req.body.id);
+    if (row?.kind.startsWith('signin:')) throw new Error('Request a new sign-in link from the homepage.');
     if (!row || !['failed','preview','uncertain'].includes(row.status)) throw new Error('Only failed, previewed, or reviewed uncertain messages can be retried.');
     if (row.status==='uncertain' && req.body.confirm!=='CHECKED') throw new Error('Confirm you checked the mailbox before retrying this uncertain email.');
     const person=db.prepare('SELECT email FROM people WHERE id=?').get(row.giver);
@@ -185,7 +208,7 @@ export function createApp(config,db,providedTransport) {
     audit(db,'queue-retry',{id:row.id,previous:row.status});res.json({ok:true});
   });
   app.use('/api/member',(req,res,next)=>{
-    if (req.session?.role!=='member') return res.status(403).json({error:'Use your private family link.'});
+    if (req.session?.role!=='member') return res.status(403).json({error:'Sign in from the homepage.'});
     next();
   });
   app.get('/api/member/profile',(req,res)=>{

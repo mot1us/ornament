@@ -21,7 +21,8 @@ npm run dev
 ```
 
 Open [localhost:3080/admin](http://localhost:3080/admin) to set up an exchange
-and share personal links. Email starts in preview mode.
+and add participant emails. Share the homepage URL with the group.
+Email starts in preview mode; enable SMTP for requested sign-in links.
 
 ## Self-host
 

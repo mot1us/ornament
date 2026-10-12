@@ -36,9 +36,11 @@ The external Docker network `pangolin_frontend` must already exist. Route your
 hostname to `ornament:3080` on that network and enable HTTPS. No app port is
 published directly on the VPS.
 
-Family links use Ornament's own authentication. Leave the family routes
-accessible through Pangolin; you can add separate protection to `/admin`.
-Visit `/admin` to set up your exchange and personal links.
+The shared homepage and email sign-in links use Ornament's own authentication.
+Leave the family routes accessible through Pangolin; you can add separate
+protection to `/admin`.
+Visit `/admin` to set up your exchange and add a separate email address for each
+participant. Share your homepage URL with everyone once email is configured.
 
 ## Private data
 
@@ -70,7 +72,10 @@ SMTP_FROM=Ornament <santa@your-domain.example>
 Mark `SMTP_PASSWORD` as a secret. Port 587 uses STARTTLS; 465 uses TLS.
 Verify the sender with your provider. Review addresses and messages in
 **Email** before explicitly sending; preview messages are never sent
-automatically. The app does not install a VPS mail server.
+automatically. Requested sign-in links are sent immediately in SMTP mode; they
+never trigger invitation or assignment batches. In preview mode, find sign-in
+messages in **Email → Preview**. Links expire after 15 minutes and work once.
+The app does not install a VPS mail server.
 
 ## Backups and updates
 

@@ -39,6 +39,13 @@ export function openDatabase(dataDir) {
       error TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, sent_at TEXT,
       UNIQUE(year, giver, kind)
     );
+    CREATE TABLE IF NOT EXISTS sign_in_tokens (
+      hash TEXT PRIMARY KEY, year INTEGER REFERENCES exchanges(year), person_id TEXT REFERENCES people(id),
+      email TEXT NOT NULL, mail_id TEXT NOT NULL REFERENCES outbox(id), expires INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sign_in_requests (
+      email_hash TEXT PRIMARY KEY, last_request INTEGER NOT NULL, window_start INTEGER NOT NULL, count INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS audit (
       id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, detail TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

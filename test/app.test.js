@@ -9,12 +9,14 @@ import { createExchange, savePerson, inviteLink, draftDraw, lockDraw, prepareMai
 import { passwordHash, readConfig } from '../src/security.js';
 import { createApp } from '../src/server.js';
 import { createMailer } from '../src/mail.js';
+import { prepareSignIn, expireSignIns } from '../src/signin.js';
+import { hash } from '../src/security.js';
 
-async function fixture(t) {
+async function fixture(t,{emailMode='preview',transport}={}) {
   const dir=mkdtempSync(join(tmpdir(),'santa-test-'));
   const db=openDatabase(dir);
-  const config=readConfig({ADMIN_PASSWORD_HASH:passwordHash('a-valid-test-password'),DATA_DIR:dir,EMAIL_MODE:'preview'});
-  const server=createApp(config,db).listen(0,'127.0.0.1');await once(server,'listening');
+  const config=readConfig({ADMIN_PASSWORD_HASH:passwordHash('a-valid-test-password'),DATA_DIR:dir,EMAIL_MODE:emailMode});
+  const server=createApp(config,db,transport).listen(0,'127.0.0.1');await once(server,'listening');
   config.publicUrl=`http://127.0.0.1:${server.address().port}`;
   t.after(async()=>{server.close();server.closeAllConnections();await once(server,'close');db.close();rmSync(dir,{recursive:true,force:true});});
   const call=async(path,body,auth={})=>{
@@ -136,4 +138,118 @@ test('correcting an email after finalization preserves the draw and updates unse
   assert.equal((await call('/admin/contact',{year:2026,id:person.id,email:'corrected@example.test'},admin)).status,200);
   assert.deepEqual(db.prepare('SELECT * FROM assignments WHERE year=2026').all(),before);
   assert.equal(db.prepare('SELECT recipient_email FROM outbox WHERE giver=?').get(person.id).recipient_email,'corrected@example.test');
+});
+
+function signInToken(db,id) {
+  const mail=id?db.prepare('SELECT * FROM outbox WHERE id=?').get(id):db.prepare("SELECT * FROM outbox WHERE kind LIKE 'signin:%' ORDER BY rowid DESC LIMIT 1").get();
+  return {mail,token:new URL(mail.body.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0]).hash.slice(1)};
+}
+
+test('the shared link accepts an email without revealing membership and issues a scoped, single-use sign-in',async t=>{
+  const {db,config,call}=await fixture(t);seed(db);
+  const person=members(db,2026)[0];
+  const known=await call('/sign-in',{email:` ${person.email.toUpperCase()} `});
+  const unknown=await call('/sign-in',{email:'unlisted@example.test'});
+  assert.equal(known.status,202);assert.deepEqual(known.data,unknown.data);assert.equal(known.cookie,undefined);
+  assert.equal((await call('/member/profile')).status,403);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM outbox WHERE kind LIKE 'signin:%'").get().n,1);
+  const {mail,token}=signInToken(db);
+  assert.equal(mail.recipient_email,person.email);assert.equal(mail.status,'preview');
+  assert.equal(db.prepare('SELECT hash FROM sign_in_tokens').get().hash,hash(token));
+  assert.equal(db.prepare('SELECT hash FROM sign_in_tokens').get().hash.includes(token),false);
+  await call('/sign-in',{email:person.email});
+  assert.equal(db.prepare("SELECT count(*) AS n FROM outbox WHERE kind LIKE 'signin:%'").get().n,1);
+  const redeemed=await call('/redeem',{token,personId:members(db,2026)[1].id});
+  const member={cookie:redeemed.cookie,csrf:redeemed.data.csrf};
+  assert.equal(redeemed.status,200);assert.equal(redeemed.data.year,2026);
+  assert.equal((await call('/member/profile',undefined,member)).data.person.name,person.name);
+  assert.equal((await call('/admin/state',undefined,member)).status,403);
+  assert.equal((await call('/member/profile',{wishlist:'A scarf',gifts:[]},member)).status,200);
+  assert.equal((await call('/redeem',{token})).status,401);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM sign_in_tokens').get().n,0);
+  assert.equal(db.prepare('SELECT body FROM outbox WHERE id=?').get(mail.id).body.includes(token),false);
+  // Existing organizer-issued links remain compatible with the new login flow.
+  assert.equal((await call('/redeem',{token:new URL(inviteLink(db,config,2026,person.id)).hash.slice(1)})).status,200);
+});
+
+test('expired, revoked, changed-address, inactive and archived sign-in links cannot create sessions',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);
+  const people=members(db,2026);
+  const issue=p=>signInToken(db,prepareSignIn(db,config,p.email));
+  const expired=issue(people[0]);
+  db.prepare('UPDATE sign_in_tokens SET expires=? WHERE mail_id=?').run(Date.now()-1,expired.mail.id);
+  assert.equal((await call('/redeem',{token:expired.token})).status,401);
+  expireSignIns(db);
+  assert.equal(db.prepare('SELECT status FROM outbox WHERE id=?').get(expired.mail.id).status,'expired');
+  const revoked=issue(people[1]);
+  await call('/admin/revoke',{year:2026,personId:people[1].id},admin);
+  assert.equal((await call('/redeem',{token:revoked.token})).status,401);
+  const corrected=issue(people[2]);
+  await call('/admin/contact',{year:2026,id:people[2].id,email:'new-address@example.test'},admin);
+  assert.equal((await call('/redeem',{token:corrected.token})).status,401);
+  const inactive=issue(people[3]);
+  db.prepare('UPDATE enrollments SET active=0 WHERE year=2026 AND person_id=?').run(people[3].id);
+  assert.equal((await call('/redeem',{token:inactive.token})).status,401);
+  assert.equal(prepareSignIn(db,config,people[3].email),null);
+  const archived=issue(people[4]);
+  db.prepare("UPDATE exchanges SET state='archived' WHERE year=2026").run();
+  assert.equal((await call('/redeem',{token:archived.token})).status,401);
+  assert.equal(prepareSignIn(db,config,people[5].email),null);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM sessions WHERE role='member'").get().n,0);
+});
+
+test('email identities are unique and sign-in cooldown and hourly limits survive a database reopen',async t=>{
+  const {db,config,call,admin,dir}=await fixture(t);seed(db);
+  const people=members(db,2026),person=people[0],now=Date.now();
+  assert.equal((await call('/admin/people',{...people[1],year:2026,email:person.email.toUpperCase()},admin)).status,400);
+  assert.equal((await call('/admin/contact',{id:people[1].id,year:2026,email:person.email},admin)).status,400);
+  assert.ok(prepareSignIn(db,config,person.email,now));
+  const reopened=openDatabase(dir);
+  try {
+    assert.equal(prepareSignIn(reopened,config,person.email,now+30000),null);
+    for (let i=1;i<5;i++)assert.ok(prepareSignIn(reopened,config,person.email,now+i*61000));
+    assert.equal(prepareSignIn(reopened,config,person.email,now+5*61000),null);
+    assert.ok(prepareSignIn(reopened,config,person.email,now+3600001));
+  } finally {reopened.close();}
+  // Fail closed for duplicate addresses already present in an older database.
+  db.prepare('UPDATE people SET email=? WHERE id=?').run(people[2].email,people[3].id);
+  assert.equal(prepareSignIn(db,config,people[2].email),null);
+  for(let i=0;i<15;i++)assert.equal((await call('/sign-in',{email:'unlisted@example.test'})).status,202);
+  assert.equal((await call('/sign-in',{email:'unlisted@example.test'})).status,429);
+});
+
+test('a requested sign-in email sends only that message and cannot trigger a prepared family batch',async t=>{
+  const sent=[];
+  const transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);
+  prepareMail(db,config,2026,'invite');
+  const person=members(db,2026)[0];
+  const response=await call('/sign-in',{email:person.email});
+  assert.equal(response.data.mode,'email');assert.equal(sent.length,1);assert.equal(sent[0].to,person.email);
+  const {mail,token}=signInToken(db);
+  assert.equal(mail.status,'sent');
+  assert.equal(db.prepare("SELECT count(*) AS n FROM outbox WHERE kind='invite' AND status='pending'").get().n,10);
+  const mailer=createMailer(db,config,transport);
+  await mailer.deliverSignIn(mail.id);assert.equal(sent.length,1);
+  assert.equal((await call('/admin/mail/retry',{id:mail.id},admin)).status,400);
+  assert.equal((await call('/redeem',{token})).status,200);
+  await mailer.deliver(2026);assert.equal(sent.length,11);
+  // Sign-in previews or failed sign-ins are never queued by the organizer's annual mail actions.
+  const id=prepareSignIn(db,config,members(db,2026)[1].email);
+  await mailer.deliver(2026);assert.equal(sent.length,11);
+  assert.equal(db.prepare('SELECT status FROM outbox WHERE id=?').get(id).status,'pending');
+});
+
+test('sign-in delivery ambiguity never retries automatically and unavailable SMTP creates no credentials',async t=>{
+  let sends=0;
+  const transport={async sendMail(){sends++;throw Object.assign(new Error('Timeout'),{code:'ETIMEDOUT'});}};
+  const {db,config,call}=await fixture(t,{emailMode:'smtp',transport});seed(db);
+  await call('/sign-in',{email:members(db,2026)[0].email});
+  const {mail}=signInToken(db);
+  assert.equal(mail.status,'uncertain');
+  const mailer=createMailer(db,config,transport);
+  await mailer.deliverSignIn(mail.id);await mailer.deliver(2026);assert.equal(sends,1);
+  const unavailable=await fixture(t,{emailMode:'smtp'});seed(unavailable.db);
+  assert.deepEqual((await unavailable.call('/sign-in',{email:members(unavailable.db,2026)[0].email})).data,{ok:true,mode:'unavailable'});
+  assert.equal(unavailable.db.prepare('SELECT count(*) AS n FROM sign_in_tokens').get().n,0);
 });

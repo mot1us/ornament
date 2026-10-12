@@ -4,6 +4,12 @@ import { generateDraw, validateDraw } from './matching.js';
 import { hash, secret } from './security.js';
 
 export const emailValid = email => typeof email === 'string' && email.length <= 254 && /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(email);
+export const normalizeEmail = email => typeof email === 'string' ? email.trim().toLowerCase() : '';
+export function checkEmailIdentity(db,email,id) {
+  if (email && (!emailValid(email) || db.prepare('SELECT id FROM people WHERE lower(trim(email))=? AND id<>?').get(email,id || ''))) {
+    throw new Error('Use a valid, separate email address for each person.');
+  }
+}
 const short = (value, limit) => String(value ?? '').trim().slice(0, limit);
 export function giftList(input) {
   if (!Array.isArray(input) || input.length > 5) throw new Error('Add up to five gift ideas.');
@@ -51,13 +57,14 @@ export function createExchange(db, year, copyFrom) {
 export function savePerson(db, year, input) {
   mutable(db, year);
   const name = short(input.name,80);
-  const email = short(input.email,254);
+  const email = normalizeEmail(input.email);
   if (!name || (email && !emailValid(email))) throw new Error('Enter a name and a valid email address, or leave email blank for now.');
   const aliases = Array.isArray(input.aliases) ? input.aliases.map(n => short(n,80)).filter(Boolean) : [];
   if (aliases.length > 10) throw new Error('Use at most ten alternate names.');
   const id = input.id || randomUUID();
   const existing = db.prepare('SELECT * FROM people WHERE id=?').get(id);
   if (input.id && !existing) throw new Error('Person not found.');
+  checkEmailIdentity(db,email,id);
   if(existing && existing.name!==name && !aliases.includes(existing.name))aliases.push(existing.name);
   for (const candidate of [name,...aliases]) {
     const other = findPerson(db,candidate);
@@ -66,6 +73,7 @@ export function savePerson(db, year, input) {
   return transaction(db, () => {
     db.prepare(`INSERT INTO people(id,name,email,aliases) VALUES (?,?,?,?) ON CONFLICT(id)
       DO UPDATE SET name=excluded.name,email=excluded.email,aliases=excluded.aliases`).run(id,name,email,JSON.stringify(aliases));
+    db.prepare('DELETE FROM sign_in_tokens WHERE person_id=? AND email<>?').run(id,email);
     db.prepare('INSERT OR IGNORE INTO enrollments(year,person_id) VALUES (?,?)').run(year,id);
     db.prepare('UPDATE enrollments SET active=? WHERE year=? AND person_id=?').run(input.active === false ? 0 : 1,year,id);
     invalidateDraft(db,year);

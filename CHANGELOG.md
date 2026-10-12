@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Share one group URL; participants request an email sign-in link from the homepage.
+- Keep sign-in links single-use and valid for 15 minutes, with request limits and private sessions.
+- Preview sign-in emails during setup and send requested links separately from organizer email batches.
+- Preserve existing personal links, family data, and finalized matches.
+
 ## 0.1.5
 
 - Rename Docker services to `ornament` and `ornament-backup`, with routing to

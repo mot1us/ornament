@@ -42,6 +42,9 @@ main { max-width: 1120px; margin: auto; padding: 36px 32px 64px; }
 .home-card .holiday-toys { display: block; width: 100%; height: auto; }
 .home-card p { max-width: 290px; }
 .home-help { margin-top: 28px; color: var(--muted); font-size: .85rem; }
+.sign-in-form { margin-top: 24px; }
+.sign-in-form label { margin-bottom: 14px; }
+.sign-in-status { margin: 16px 0 0; color: var(--green); font-size: .85rem; }
 .login-card { max-width: 400px; margin: 56px auto; padding: 32px; background: var(--white); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 12px 35px #5a42220a; }
 .loading { padding: 64px 0; }
 button { padding: 11px 18px; border: 1px solid var(--line); background: var(--white); color: var(--ink); line-height: 1.4; }
