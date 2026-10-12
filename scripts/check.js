@@ -9,6 +9,10 @@ if(manifest.version!==lock.version || manifest.version!==lock.packages?.['']?.ve
 if(!readFileSync('CHANGELOG.md','utf8').split(/\r?\n/).includes(`## ${manifest.version}`)) {
   throw new Error(`Add a CHANGELOG.md entry for ${manifest.version}.`);
 }
+const images=[...readFileSync('compose.yaml','utf8').matchAll(/^\s+image: ghcr\.io\/mot1us\/ornament:(\S+)$/gm)];
+if(images.length!==2 || images.some(image=>image[1]!==manifest.version)) {
+  throw new Error('Pin both Compose services to the current package version.');
+}
 for (const directory of ['src','public','scripts','test']) {
   for (const name of readdirSync(directory).filter(n=>n.endsWith('.js'))) {
     const result=spawnSync(process.execPath,['--check',join(directory,name)],{stdio:'inherit'});

@@ -1,119 +1,62 @@
-# Deploy to the VPS
+# VPS setup
 
-The stack is prepared for Docker/Compose and the existing Pangolin/Traefik
-gateway. Choose a new HTTPS hostname for the family site before deploying.
+Ornament uses a prebuilt image from `ghcr.io/mot1us/ornament`, available for
+AMD64 and ARM64. Family records and credentials stay on your VPS. GitHub
+publishes the software; Dockhand pulls it without a GitHub account connection.
 
-## Deploy with Dockhand
+## Dockhand
 
-Create a Git stack in your VPS environment:
+1. Open your VPS environment → **Stacks → Create Stack**.
+2. Name it `ornament` and paste [compose.yaml](../compose.yaml) into the editor.
+3. Add the settings below in Dockhand's environment panel.
+4. Validate, then **Create & Start**. Keep automatic updates off.
 
-| Setting | Value |
-| --- | --- |
-| Stack name | `ornament` |
-| Repository | `https://github.com/mot1us/ornament.git` |
-| Branch | `main` |
-| Compose file | `compose.yaml` |
-| Context | Repository root (`.`) |
-| Build images on deploy | On |
-| Auto-sync | Off during setup |
-
-Generate an organizer password hash on your own computer from this checkout:
+Generate the organizer password hash locally from this checkout:
 
 ```sh
 node scripts/password.js
 ```
 
-In the stack's environment settings, enter:
+Set these values in Dockhand:
 
-```dotenv
-ADMIN_PASSWORD_HASH=scrypt:PASTE_THE_GENERATED_SALT:PASTE_THE_GENERATED_HASH
-PUBLIC_URL=https://ornament.example.com
-EMAIL_MODE=preview
-```
+| Variable | Value |
+| --- | --- |
+| `ADMIN_PASSWORD_HASH` | Generated hash value, marked as a secret |
+| `PUBLIC_URL` | Your HTTPS hostname, e.g. `https://ornament.example.com` |
+| `EMAIL_MODE` | `preview` |
 
-Copy only the hash value after `ADMIN_PASSWORD_HASH=`. Mark it as a secret.
-Use your actual HTTPS hostname. Deploy after saving these settings. The Compose
-file sets secure cookies and passes settings into the application explicitly.
+Copy only the hash after `ADMIN_PASSWORD_HASH=`. Save and deploy through
+Dockhand so its saved secrets are supplied. Back up Dockhand's own data too.
+The Compose file uses explicit environment variables, following the
+[Dockhand manual](https://dockhand.pro/manual/).
 
-Manage configuration changes and redeployments through Dockhand so its saved
-secrets are supplied. Include Dockhand's own data in your private backups.
-See the [Dockhand manual](https://dockhand.pro/manual/#git-integration).
+## Pangolin
 
-## Install with the CLI
+The external Docker network `pangolin_frontend` must already exist. Route your
+hostname to `secret-santa:3080` on that network and enable HTTPS. No app port is
+published directly on the VPS.
 
-Clone the GitHub repository on the VPS into a dedicated stack directory:
+Family links use Ornament's own authentication. Leave the family routes
+accessible through Pangolin; you can add separate protection to `/admin`.
+Visit `/admin` to set up your exchange and personal links.
 
-```sh
-git clone https://github.com/mot1us/ornament.git
-cd ornament
-cp .env.example .env
-chmod 600 .env
-```
+## Private data
 
-Generate a new organizer password hash with Node 24+ or using the application
-image. Building the image does not need any credentials:
+The app stores SQLite in `santa_data` and daily snapshots in `santa_backups`.
+Dockhand adds the stack prefix to volume names. Preserve the stack name and
+volumes when updating; never choose to delete volumes.
 
-```sh
-docker compose build secret-santa
-docker compose run --rm --no-deps secret-santa node scripts/password.js
-```
+Both containers run as UID/GID 1000 with read-only root filesystems. The backup
+container has no network access. Images contain application files only.
 
-Set these values in the VPS `.env`:
-
-```dotenv
-ADMIN_PASSWORD_HASH=scrypt:PASTE_THE_GENERATED_SALT:PASTE_THE_GENERATED_HASH
-PUBLIC_URL=https://ornament.example.com
-COOKIE_SECURE=true
-EMAIL_MODE=preview
-```
-
-Keep the `.env` file private (`chmod 600 .env`). The example domain is a
-placeholder; use the hostname you configure in Pangolin. The app refuses to
-start with an external HTTP URL or insecure cookies.
-
-```sh
-docker compose up -d --build
-docker compose ps
-```
-
-Pangolin should route this hostname to `secret-santa:3080` over
-`pangolin_frontend`. Use HTTPS. The family routes use the application's own
-private-link authentication; a separate Pangolin login on the entire hostname
-would make those links inconvenient. Additional Pangolin protection can be
-applied to `/admin` if desired. Do not expose port 3080 directly on the host.
-Keep access logs free of request bodies and redact sensitive headers. Personal
-link tokens use fragments, so they do not appear in HTTP request URLs.
-
-The main container and backup container run as the non-root `node` user, have
-read-only root filesystems, and drop Linux capabilities. The backup container
-has no network access. SQLite lives in `santa_data`, and backups in
-`santa_backups`. Dockhand may add a stack prefix to those volume names.
-
-## Bring over history
-
-Transfer the history files privately to the VPS; never commit them to GitHub.
-Use **History** in the organizer dashboard for a Dockhand deployment. For a
-CLI deployment with a private `.env`, stop the main container and mount an
-import directory:
-
-```sh
-docker compose stop secret-santa secret-santa-backup
-docker compose run --rm --no-deps -v /private/imports:/imports:ro secret-santa \
-  node scripts/import-history.js /imports/history-2024.json /imports/history-2025.json
-docker compose up -d
-```
-
-Use aliases to join alternate names to the same identity before importing a
-second history. Imported histories start provisional unless explicitly marked
-verified. Create the current year by copying the latest roster, then add email
-addresses and partner exclusions.
+Import past matches using **History** in the organizer dashboard. Review
+aliases and provisional histories before drawing names. Keep history files,
+wish lists, emails, `.env` files, and backups out of GitHub.
 
 ## Email
 
-Keep `EMAIL_MODE=preview` during setup. Configure an existing SMTP provider in
-Dockhand's stack environment settings, or in the VPS `.env` for a CLI deployment.
-The website and private database remain self-hosted. This does not install a
-mail server on the VPS.
+Keep `EMAIL_MODE=preview` during setup. When ready, add your SMTP provider's
+settings to Dockhand and deploy again:
 
 ```dotenv
 EMAIL_MODE=smtp
@@ -124,52 +67,55 @@ SMTP_PASSWORD=your-smtp-password
 SMTP_FROM=Ornament <santa@your-domain.example>
 ```
 
-Port 587 requires STARTTLS; port 465 uses TLS from the start. Certificate
-verification stays enabled. Do not copy an EmailJS browser public key into
-these fields; SMTP uses the connected email provider's credentials. Configure
-the provider's sender verification and domain records according to its
-instructions. In Dockhand, mark `SMTP_PASSWORD` as a secret and deploy the stack
-again after saving changes. For a CLI deployment, recreate the application:
+Mark `SMTP_PASSWORD` as a secret. Port 587 uses STARTTLS; 465 uses TLS.
+Verify the sender with your provider. Review addresses and messages in
+**Email** before explicitly sending; preview messages are never sent
+automatically. The app does not install a VPS mail server.
+
+## Backups and updates
+
+The backup container writes a checked SQLite snapshot on startup and every
+24 hours. Failures retry after one hour. Snapshots are retained. Monitor logs
+and storage, and arrange encrypted off-VPS copies with your backup service.
+
+Back up before updating. After a release's GitHub checks pass, change **both**
+image tags in Dockhand's Compose editor to that release and deploy. Keep the
+volumes. Use a published digest instead of a tag if you want an immutable pin.
+Avoid `latest` and automatic deployment.
+
+To restore, stop both containers, preserve the existing volume, and copy a
+checked snapshot into a fresh data volume as `secret-santa.sqlite`, owned by
+UID/GID 1000. Omit old `-wal` and `-shm` files. Restart and verify history,
+draws, and delivery records before sharing links. Revoke links and sessions
+if restoring after a security incident.
+
+## CLI alternative
 
 ```sh
-docker compose up -d --force-recreate secret-santa
+git clone https://github.com/mot1us/ornament.git
+cd ornament
+cp .env.example .env
+chmod 600 .env
+docker compose pull
+docker compose run --rm --no-deps secret-santa node scripts/password.js
+# Add the generated hash, HTTPS PUBLIC_URL, and EMAIL_MODE=preview to .env.
+docker compose up -d
 ```
 
-Messages prepared in preview mode must be explicitly queued again before real
-sending. Verify addresses and previews in **Email** first. Never use the real
-family list for deployment smoke tests.
-
-## Backup and recovery
-
-The backup container writes a checked snapshot on startup and every 24 hours.
-A failed backup retries after one hour. Monitor its logs and storage usage.
-Snapshots are retained; no automatic deletion is configured.
-
-For a manual online snapshot:
+To build your checkout instead, use the optional override:
 
 ```sh
-docker compose exec secret-santa node scripts/backup.js /backups
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
-Arrange encrypted off-VPS copies of the backup volume using your existing
-backup service, such as a properly configured restic repository. This requires
-a destination and credentials that have not been selected for this project.
-SQLite snapshots contain private messages and access links; keep them private
-and encrypted outside the server. Schedule a periodic restore test.
+## Publishing images
 
-To restore, stop both containers first. Preserve the existing data volume and
-copy a checked snapshot into a fresh `santa_data` volume as
-`secret-santa.sqlite`, owned by UID/GID 1000. Do not bring old `-wal` or `-shm`
-files into the restored directory. Restart the application and verify rosters,
-history, finalized draws, and delivery statuses before sharing links. Sessions
-and link credentials are included in a full snapshot; revoke them in the
-organizer dashboard if the restore followed a security incident.
+Pushes to `main` publish the package version only after app, Compose, and
+container checks pass. CI uses GitHub's built-in token; it needs no VPS or
+SMTP credentials. Existing release tags are preserved.
 
-## Updates
-
-Back up first. In Dockhand, deploy the Git stack with image building enabled
-after the version's GitHub checks pass. For a CLI deployment, pull the reviewed
-commit and rebuild the containers. Keep the existing stack name and named
-volumes so updates retain the database and backups. CI checks the application,
-Compose configuration, and Docker build for each pushed change. Deployment is
-deliberate; CI does not SSH into your VPS or send family emails.
+For the first publication, the repository owner must make the package public:
+open the **Ornament package → Package settings → Change visibility → Public**.
+GitHub starts new container packages as private, even for public repositories.
+Once public, Dockhand can pull without credentials. See
+[GitHub's package visibility instructions](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).

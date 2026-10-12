@@ -1,0 +1,8 @@
+# Optional override for building a local checkout instead of pulling a release.
+services:
+  secret-santa:
+    image: ornament:local
+    build: .
+  secret-santa-backup:
+    image: ornament:local
+    build: .

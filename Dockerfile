@@ -1,6 +1,11 @@
 FROM node:24.16.0-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/mot1us/ornament" \
+      org.opencontainers.image.title="Ornament" \
+      org.opencontainers.image.description="Self-hosted Secret Santa for family and friends." \
+      org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 COPY package*.json ./
+COPY LICENSE ./LICENSE
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --chown=node:node src ./src
 COPY --chown=node:node public ./public

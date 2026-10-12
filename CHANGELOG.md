@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- Publish checked Docker images for AMD64 and ARM64 to GitHub Container Registry.
+- Deploy a pinned release through a regular Dockhand stack with private VPS volumes.
+- Verify container startup and backups in CI; retain an optional local build override.
+
 ## 0.1.3
 
 - Pass Dockhand settings and secrets into the app without requiring a local

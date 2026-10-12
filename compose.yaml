@@ -1,6 +1,6 @@
 services:
   secret-santa:
-    build: .
+    image: ghcr.io/mot1us/ornament:0.1.4
     restart: unless-stopped
     environment:
       ADMIN_PASSWORD_HASH: "${ADMIN_PASSWORD_HASH:-}"
@@ -32,7 +32,7 @@ services:
       - ALL
 
   secret-santa-backup:
-    build: .
+    image: ghcr.io/mot1us/ornament:0.1.4
     restart: unless-stopped
     command: ["node", "scripts/backup-loop.js"]
     environment:
