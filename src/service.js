@@ -110,6 +110,7 @@ export function draftDraw(db, year) {
 
 export function lockDraw(db,year) {
   if (getExchange(db,year).state !== 'drafted') throw new Error('Generate a draft first.');
+  if (db.prepare("SELECT id FROM submissions WHERE year=? AND status='pending'").get(year)) throw new Error('Review submitted wish lists before finalizing.');
   if (historyReadiness(db,year).some(h=>h.status !== 'verified')) throw new Error('Confirm the previous two years of history before finalizing. You can keep editing or generating drafts.');
   const people = members(db,year).filter(p=>p.active);
   if (people.some(p=>!emailValid(p.email))) throw new Error('Every participating person needs a valid email address before finalizing.');
@@ -142,8 +143,9 @@ export function makeEmail(db,config,year,personId,kind) {
   const pair = db.prepare('SELECT recipient FROM assignments WHERE year=? AND giver=?').get(year,personId);
   const recipient = members(db,year).find(p=>p.id===pair.recipient);
   const gifts = recipient.gifts.map(g=>[g.label,g.url].filter(Boolean).join(': ')).join('\n');
+  const message=recipient.message?`Message to you:\n${recipient.message}\n\n`:'';
   return {email:person.email,subject:`Your Secret Santa match · ${exchange.title}`,
-    body:`Hi ${person.name},\n\nYou are ${recipient.name}'s Secret Santa!\n\n${details}\n\nTheir wish list:\n${recipient.wishlist || 'They have not added a wish list yet.'}\n\n${gifts}\n\nYour private page (with the latest wish list):\n${link}\n\nKeep your match and this link secret.\n\nHappy gifting!`};
+    body:`Hi ${person.name},\n\nYou are ${recipient.name}'s Secret Santa!\n\n${details}\n\nTheir wish list:\n${recipient.wishlist || 'They have not added a wish list yet.'}\n\n${message}${gifts}\n\nYour private page (with the latest wish list):\n${link}\n\nKeep your match and this link secret.\n\nHappy gifting!`};
 }
 
 export function prepareMail(db,config,year,kind,ids) {

@@ -17,7 +17,7 @@ export function openDatabase(dataDir) {
     );
     CREATE TABLE IF NOT EXISTS enrollments (
       year INTEGER REFERENCES exchanges(year), person_id TEXT REFERENCES people(id), active INTEGER NOT NULL DEFAULT 1,
-      wishlist TEXT NOT NULL DEFAULT '', gifts TEXT NOT NULL DEFAULT '[]', PRIMARY KEY (year, person_id)
+      wishlist TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', gifts TEXT NOT NULL DEFAULT '[]', PRIMARY KEY (year, person_id)
     );
     CREATE TABLE IF NOT EXISTS exclusions (
       year INTEGER REFERENCES exchanges(year), giver TEXT REFERENCES people(id), recipient TEXT REFERENCES people(id),
@@ -46,10 +46,23 @@ export function openDatabase(dataDir) {
     CREATE TABLE IF NOT EXISTS sign_in_requests (
       email_hash TEXT PRIMARY KEY, last_request INTEGER NOT NULL, window_start INTEGER NOT NULL, count INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS group_tokens (
+      hash TEXT PRIMARY KEY, year INTEGER REFERENCES exchanges(year), expires INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS submissions (
+      id TEXT PRIMARY KEY, year INTEGER REFERENCES exchanges(year), name TEXT NOT NULL, email TEXT NOT NULL,
+      wishlist TEXT NOT NULL DEFAULT '', message TEXT NOT NULL DEFAULT '', gifts TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'pending', person_id TEXT REFERENCES people(id),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS approved_submission_person ON submissions(year,person_id) WHERE status='approved';
     CREATE TABLE IF NOT EXISTS audit (
       id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, detail TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );`);
+  if (!db.prepare('PRAGMA table_info(enrollments)').all().some(column=>column.name==='message')) {
+    db.exec("ALTER TABLE enrollments ADD COLUMN message TEXT NOT NULL DEFAULT ''");
+  }
   // An interrupted SMTP transaction may have succeeded. Never automatically resend it.
   db.prepare("UPDATE outbox SET status='uncertain', error='Sending was interrupted. Check the recipient mailbox before retrying.' WHERE status='sending'").run();
   return db;
@@ -68,7 +81,7 @@ export function getExchange(db, year) {
   return row;
 }
 export function members(db, year) {
-  return db.prepare(`SELECT p.*, e.active, e.wishlist, e.gifts FROM people p JOIN enrollments e ON e.person_id=p.id
+  return db.prepare(`SELECT p.*, e.active, e.wishlist, e.message, e.gifts FROM people p JOIN enrollments e ON e.person_id=p.id
     WHERE e.year=? ORDER BY p.name COLLATE NOCASE`).all(year).map(row => ({...row, aliases: JSON.parse(row.aliases), gifts: JSON.parse(row.gifts)}));
 }
 

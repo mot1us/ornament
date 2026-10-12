@@ -61,7 +61,7 @@ test('personal links scope access to one person, hide unfinalized recipients, an
   assert.equal((await call('/member/profile',{wishlist:'A book',gifts:[{label:'Book',url:'https://example.test/book'}]},member)).status,200);
   lockDraw(db,2026);
   const after=await call('/member/profile',undefined,member);
-  assert.ok(after.data.recipient);assert.deepEqual(Object.keys(after.data.recipient).sort(),['gifts','name','wishlist']);
+  assert.ok(after.data.recipient);assert.deepEqual(Object.keys(after.data.recipient).sort(),['gifts','message','name','wishlist']);
   await call('/admin/revoke',{year:2026,personId:person.id},admin);
   assert.equal((await call('/member/profile',undefined,member)).status,403);
   assert.equal((await call('/redeem',{token:new URL(link).hash.slice(1)})).status,401);
@@ -252,4 +252,271 @@ test('sign-in delivery ambiguity never retries automatically and unavailable SMT
   const unavailable=await fixture(t,{emailMode:'smtp'});seed(unavailable.db);
   assert.deepEqual((await unavailable.call('/sign-in',{email:members(unavailable.db,2026)[0].email})).data,{ok:true,mode:'unavailable'});
   assert.equal(unavailable.db.prepare('SELECT count(*) AS n FROM sign_in_tokens').get().n,0);
+});
+
+function authFrom(response) {
+  return {cookie:response.cookie,csrf:response.data.csrf};
+}
+
+test('review can reuse a historical identity absent from the current roster',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db);
+  const person=members(db,2026)[0];
+  createExchange(db,2027,null);
+  const state=await call('/admin/state?year=2027',undefined,admin);
+  assert.deepEqual(state.data.people,[]);
+  assert.ok(state.data.identities.some(p=>p.id===person.id&&p.name===person.name));
+  const {auth}=await openGroup(call,admin,2027);
+  await submitGroup(call,auth,submittedFields(person.name,person.email));
+  const submission=db.prepare('SELECT id FROM submissions WHERE year=2027').get();
+  const result=await call('/admin/submissions/approve',{id:submission.id,personId:person.id},admin);
+  assert.equal(result.status,200);
+  assert.equal(members(db,2027)[0].id,person.id);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM people').get().n,10);
+});
+async function openGroup(call,admin,year=2026) {
+  const created=await call('/admin/group-link',{year},admin);
+  assert.equal(created.status,200);
+  const token=new URL(created.data.link).hash.slice('#group-'.length);
+  const redeemed=await call('/group/redeem',{token});
+  assert.equal(redeemed.status,200);assert.equal(redeemed.data.role,'group');
+  return {token,auth:authFrom(redeemed)};
+}
+async function submitGroup(call,auth,fields) {
+  const saved=await call('/group/profile',fields,auth);
+  assert.equal(saved.status,200);assert.equal(saved.data.role,'submission');
+  return saved.cookie?authFrom(saved):{...auth,csrf:saved.data.csrf};
+}
+const submittedFields=(name='Guest A',email='guest-a@example.test')=>({
+  name,email,wishlist:'A blue scarf',message:'Thanks for being my Secret Santa!',
+  gifts:[{label:'Scarf',url:'https://example.test/scarf'}]
+});
+
+test('the group form needs a private group link and saves without login emails or changes to known identities',async t=>{
+  const sent=[];
+  const {db,call,admin}=await fixture(t,{emailMode:'smtp',transport:{async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}}});
+  seed(db);
+  const person=members(db,2026)[0];
+  db.prepare('UPDATE enrollments SET wishlist=?,message=?,gifts=? WHERE year=? AND person_id=?').run(
+    'Existing private wish list','Existing private message',JSON.stringify([{label:'Private gift',url:'https://example.test/private'}]),2026,person.id);
+  const canonicalBefore=db.prepare('SELECT * FROM people WHERE id=?').get(person.id);
+  const enrollmentBefore=db.prepare('SELECT * FROM enrollments WHERE year=? AND person_id=?').get(2026,person.id);
+  assert.equal((await call('/group/profile')).status,403);
+  assert.equal((await call('/group/profile',submittedFields())).status,403);
+  assert.equal((await call('/group/redeem',{token:'invalid'})).status,401);
+  const {token,auth}=await openGroup(call,admin);
+  assert.equal(db.prepare('SELECT hash FROM group_tokens').get().hash,hash(token));
+  assert.equal((await call('/redeem',{token})).status,401);
+  const initial=await call('/group/profile',undefined,auth);
+  assert.deepEqual(Object.keys(initial.data).sort(),['exchange','submission']);
+  assert.deepEqual(Object.keys(initial.data.exchange).sort(),['budget','eventDate','state','title','year']);
+  assert.equal(initial.data.submission,null);
+  assert.equal(JSON.stringify(initial.data).includes(person.email),false);
+  assert.equal((await call('/group/profile',submittedFields(),{...auth,csrf:'wrong'})).status,403);
+  assert.equal((await call('/group/profile',submittedFields(),{...auth,headers:{Origin:'https://attacker.test'}})).status,403);
+  assert.equal((await call('/group/profile',{...submittedFields(),gifts:[{label:'Bad',url:'javascript:alert(1)'}]},auth)).status,400);
+  assert.equal((await call('/group/profile',{...submittedFields(),message:'x'.repeat(2001)},auth)).status,400);
+  const fields=submittedFields(person.name,` ${person.email.toUpperCase()} `);
+  const submissionAuth=await submitGroup(call,auth,fields);
+  const profile=await call('/group/profile',undefined,submissionAuth);
+  assert.deepEqual(profile.data.submission,{...fields,email:person.email,status:'pending'});
+  assert.deepEqual(Object.keys(profile.data.submission).sort(),['email','gifts','message','name','status','wishlist']);
+  assert.equal(JSON.stringify(profile.data).includes('Existing private'),false);
+  assert.equal((await call('/member/profile',undefined,submissionAuth)).status,403);
+  assert.equal((await call('/admin/state',undefined,submissionAuth)).status,403);
+  assert.deepEqual(db.prepare('SELECT * FROM people WHERE id=?').get(person.id),canonicalBefore);
+  assert.deepEqual(db.prepare('SELECT * FROM enrollments WHERE year=? AND person_id=?').get(2026,person.id),enrollmentBefore);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM invite_tokens').get().n,0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM sign_in_tokens').get().n,0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM outbox').get().n,0);
+  assert.deepEqual(sent,[]);
+});
+
+test('shared group sessions isolate saved entries and reopening the group link resumes only the same browser entry',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db);
+  const {token,auth:firstGroup}=await openGroup(call,admin);
+  const firstFields=submittedFields();
+  let first=await submitGroup(call,firstGroup,firstFields);
+  const firstId=db.prepare('SELECT id FROM submissions WHERE email=?').get(firstFields.email).id;
+  const secondRedeemed=await call('/group/redeem',{token});
+  const secondGroup=authFrom(secondRedeemed);
+  assert.equal((await call('/group/profile',undefined,secondGroup)).data.submission,null);
+  const secondFields={...submittedFields('Guest B','guest-b@example.test'),wishlist:'A green coat',message:'Guest B note'};
+  const second=await submitGroup(call,secondGroup,{...secondFields,id:firstId,personId:firstId});
+  assert.equal(db.prepare('SELECT count(*) AS n FROM submissions').get().n,2);
+  assert.deepEqual((await call('/group/profile',undefined,first)).data.submission,{...firstFields,status:'pending'});
+  assert.deepEqual((await call('/group/profile',undefined,second)).data.submission,{...secondFields,status:'pending'});
+  const secondId=db.prepare('SELECT id FROM submissions WHERE email=?').get(secondFields.email).id;
+  first=await submitGroup(call,first,{...firstFields,wishlist:'A red scarf',id:secondId,personId:secondId});
+  assert.equal((await call('/group/profile',undefined,second)).data.submission.wishlist,secondFields.wishlist);
+  const resumed=await call('/group/redeem',{token},first);
+  assert.equal(resumed.status,200);assert.equal(resumed.data.role,'submission');
+  first=resumed.cookie?authFrom(resumed):{...first,csrf:resumed.data.csrf};
+  assert.equal((await call('/group/profile',undefined,first)).data.submission.wishlist,'A red scarf');
+  assert.equal((await call('/member/profile',undefined,first)).status,403);
+});
+
+test('organizer review maps aliases to stable people, prevents duplicate approvals, and blocks finalizing pending wish lists',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db);
+  const person=members(db,2026)[0],other=members(db,2026)[1];
+  savePerson(db,2026,{...person,aliases:['Alias A']});
+  const countBefore=db.prepare('SELECT count(*) AS n FROM people').get().n;
+  const historyBefore=db.prepare('SELECT * FROM assignments WHERE year IN (2024,2025)').all();
+  const {auth}=await openGroup(call,admin);
+  const fields=submittedFields('Alias A','alias-a@example.test');
+  const own=await submitGroup(call,auth,fields);
+  const state=await call('/admin/state?year=2026',undefined,admin);
+  const pending=state.data.submissions.find(s=>s.email===fields.email);
+  assert.equal(pending.status,'pending');assert.equal(pending.suggestedPersonId,person.id);
+  draftDraw(db,2026);
+  const blocked=await call('/admin/finalize',{year:2026,confirm:'FINALIZE'},admin);
+  assert.equal(blocked.status,400);assert.match(blocked.data.error,/review|submitted|pending/i);
+  assert.equal(db.prepare('SELECT state FROM exchanges WHERE year=2026').get().state,'drafted');
+  assert.equal((await call('/admin/submissions/approve',{id:pending.id,personId:person.id},own)).status,403);
+  assert.equal((await call('/admin/submissions/approve',{id:pending.id,personId:'new'},admin)).status,400);
+  const approved=await call('/admin/submissions/approve',{id:pending.id,personId:person.id},admin);
+  assert.equal(approved.status,200);assert.equal(approved.data.personId,person.id);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM people').get().n,countBefore);
+  assert.deepEqual(db.prepare('SELECT * FROM assignments WHERE year IN (2024,2025)').all(),historyBefore);
+  assert.equal(db.prepare('SELECT state FROM exchanges WHERE year=2026').get().state,'open');
+  const canonical=members(db,2026).find(p=>p.id===person.id);
+  assert.equal(canonical.name,person.name);assert.equal(canonical.email,fields.email);
+  assert.equal(canonical.wishlist,fields.wishlist);assert.equal(canonical.message,fields.message);assert.deepEqual(canonical.gifts,fields.gifts);
+  assert.equal((await call('/group/profile',undefined,own)).data.submission.status,'approved');
+  const secondGroup=await openGroup(call,admin);
+  await submitGroup(call,secondGroup.auth,submittedFields('Another A','another-a@example.test'));
+  const duplicate=db.prepare('SELECT id FROM submissions WHERE email=?').get('another-a@example.test');
+  assert.equal((await call('/admin/submissions/approve',{id:duplicate.id,personId:person.id},admin)).status,400);
+  assert.equal(members(db,2026).find(p=>p.id===person.id).email,fields.email);
+  const thirdGroup=await openGroup(call,admin);
+  await submitGroup(call,thirdGroup.auth,submittedFields('Guest C',other.email));
+  const conflicting=db.prepare('SELECT id FROM submissions WHERE email=? AND status=?').get(other.email,'pending');
+  assert.equal((await call('/admin/submissions/approve',{id:conflicting.id,personId:'new'},admin)).status,400);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM people').get().n,countBefore);
+  assert.equal((await call('/admin/submissions/reject',{id:duplicate.id},admin)).status,200);
+  assert.equal((await call('/admin/submissions/reject',{id:conflicting.id},admin)).status,200);
+  draftDraw(db,2026);
+  assert.equal((await call('/admin/finalize',{year:2026,confirm:'FINALIZE'},admin)).status,200);
+});
+
+test('a reviewed entry edits only its own wish list after finalization and never grants access to the secret match',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);
+  const person=members(db,2026)[0];
+  const {token,auth}=await openGroup(call,admin);
+  const fields=submittedFields(person.name,person.email);
+  let own=await submitGroup(call,auth,fields);
+  const id=db.prepare('SELECT id FROM submissions WHERE email=?').get(person.email).id;
+  assert.equal((await call('/admin/submissions/approve',{id,personId:person.id},admin)).status,200);
+  assert.equal((await call('/group/profile',{...fields,email:'changed@example.test'},own)).status,400);
+  assert.equal((await call('/group/profile',{...fields,name:'Different name'},own)).status,400);
+  draftDraw(db,2026);lockDraw(db,2026);
+  const pairs=db.prepare('SELECT * FROM assignments WHERE year=2026').all();
+  assert.equal((await call('/group/redeem',{token})).status,400);
+  const resumed=await call('/group/redeem',{token},own);
+  assert.equal(resumed.status,200);assert.equal(resumed.data.role,'submission');
+  own=resumed.cookie?authFrom(resumed):{...own,csrf:resumed.data.csrf};
+  const edited={...fields,wishlist:'An updated scarf',message:'Please choose wool',gifts:[{label:'Wool scarf',url:'https://example.test/wool'}]};
+  own=await submitGroup(call,own,edited);
+  const profile=await call('/group/profile',undefined,own);
+  assert.deepEqual(profile.data.submission,{...edited,status:'approved'});
+  assert.equal('recipient' in profile.data,false);
+  assert.equal((await call('/member/profile',undefined,own)).status,403);
+  assert.deepEqual(db.prepare('SELECT * FROM assignments WHERE year=2026').all(),pairs);
+  const canonical=members(db,2026).find(p=>p.id===person.id);
+  assert.equal(canonical.wishlist,edited.wishlist);assert.equal(canonical.message,edited.message);assert.deepEqual(canonical.gifts,edited.gifts);
+  const personal=await call('/redeem',{token:new URL(inviteLink(db,config,2026,person.id)).hash.slice(1)});
+  const verified=await call('/member/profile',undefined,authFrom(personal));
+  assert.ok(verified.data.recipient);
+  assert.equal(verified.data.person.message,edited.message);
+});
+
+test('revoking a group link closes entry sessions while preserving saved entry edits, and declined entries cannot be edited',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db);
+  const {token,auth}=await openGroup(call,admin);
+  const fields=submittedFields();
+  let own=await submitGroup(call,auth,fields);
+  const unsubmitted=authFrom(await call('/group/redeem',{token}));
+  assert.equal((await call('/admin/group-revoke',{year:2026},admin)).status,200);
+  assert.equal((await call('/group/redeem',{token})).status,401);
+  assert.equal((await call('/group/profile',undefined,unsubmitted)).status,403);
+  assert.equal((await call('/group/profile',undefined,own)).status,200);
+  own=await submitGroup(call,own,{...fields,message:'Saved after link rotation'});
+  const id=db.prepare('SELECT id FROM submissions WHERE email=?').get(fields.email).id;
+  assert.equal((await call('/admin/submissions/reject',{id},admin)).status,200);
+  assert.equal((await call('/group/profile',undefined,own)).data.submission.status,'rejected');
+  assert.equal((await call('/group/profile',{...fields,wishlist:'Rejected edit'},own)).status,400);
+  assert.equal((await call('/admin/submissions/approve',{id,personId:'new'},admin)).status,400);
+  const fresh=await openGroup(call,admin);
+  assert.equal((await call('/group/profile',undefined,fresh.auth)).data.submission,null);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM people').get().n,10);
+});
+
+test('expired group links cannot issue sessions and individual revocation removes only that approved entry access',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db);
+  const people=members(db,2026).slice(0,2),owners=[];
+  for(const person of people) {
+    const {auth}=await openGroup(call,admin);
+    owners.push(await submitGroup(call,auth,submittedFields(person.name,person.email)));
+    const id=db.prepare('SELECT id FROM submissions WHERE email=?').get(person.email).id;
+    assert.equal((await call('/admin/submissions/approve',{id,personId:person.id},admin)).status,200);
+  }
+  const {token}=await openGroup(call,admin);
+  db.prepare('UPDATE group_tokens SET expires=? WHERE hash=?').run(Date.now()-1,hash(token));
+  assert.equal((await call('/group/redeem',{token})).status,401);
+  assert.equal((await call('/admin/revoke',{year:2026,personId:people[0].id},admin)).status,200);
+  assert.equal((await call('/group/profile',undefined,owners[0])).status,403);
+  assert.equal((await call('/group/profile',submittedFields(people[0].name,people[0].email),owners[0])).status,403);
+  assert.equal((await call('/group/profile',undefined,owners[1])).status,200);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM submissions WHERE status='approved'").get().n,2);
+});
+
+test('review can add a new participant and assignment emails include only the matched recipient content',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);
+  const {auth}=await openGroup(call,admin);
+  const fields=submittedFields('Guest New','guest-new@example.test');
+  await submitGroup(call,auth,fields);
+  const id=db.prepare('SELECT id FROM submissions WHERE email=?').get(fields.email).id;
+  const approved=await call('/admin/submissions/approve',{id,personId:'new'},admin);
+  assert.equal(approved.status,200);
+  const newcomer=members(db,2026).find(p=>p.id===approved.data.personId);
+  assert.equal(newcomer.name,fields.name);assert.equal(newcomer.email,fields.email);assert.equal(newcomer.active,1);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM people').get().n,11);
+  for(const person of members(db,2026))db.prepare('UPDATE enrollments SET wishlist=?,message=?,gifts=? WHERE year=2026 AND person_id=?').run(
+    `Wish-${person.id}`,`Note-${person.id}`,JSON.stringify([{label:`Gift-${person.id}`,url:`https://example.test/gift/${person.id}`}]),person.id);
+  draftDraw(db,2026);lockDraw(db,2026);
+  prepareMail(db,config,2026,'assignment');
+  for(const mail of db.prepare("SELECT * FROM outbox WHERE year=2026 AND kind='assignment'").all()) {
+    const recipient=db.prepare('SELECT recipient FROM assignments WHERE year=2026 AND giver=?').get(mail.giver).recipient;
+    const target=members(db,2026).find(p=>p.id===recipient);
+    assert.equal(mail.recipient_email,members(db,2026).find(p=>p.id===mail.giver).email);
+    assert.ok(mail.body.includes(`${target.name}'s Secret Santa`));
+    assert.ok(mail.body.includes(`Wish-${recipient}`));assert.ok(mail.body.includes(`Note-${recipient}`));
+    assert.ok(mail.body.includes(`https://example.test/gift/${recipient}`));
+    assert.equal(mail.body.includes(`Note-${mail.giver}`),false);
+  }
+  const before=db.prepare('SELECT id,body FROM outbox ORDER BY id').all();
+  db.prepare("UPDATE enrollments SET message='Changed after preparation' WHERE year=2026").run();
+  prepareMail(db,config,2026,'assignment');
+  assert.deepEqual(db.prepare('SELECT id,body FROM outbox ORDER BY id').all(),before);
+});
+
+test('adding the message field to a legacy database preserves finalized assignments and sent mail',async t=>{
+  const {db,config,dir}=await fixture(t);seed(db);draftDraw(db,2026);lockDraw(db,2026);
+  const person=members(db,2026)[0];
+  db.prepare('UPDATE enrollments SET wishlist=?,gifts=? WHERE year=2026 AND person_id=?').run(
+    'Legacy wish list',JSON.stringify([{label:'Legacy book',url:'https://example.test/legacy'}]),person.id);
+  prepareMail(db,config,2026,'assignment');
+  db.prepare("UPDATE outbox SET status='sent',sent_at='2026-01-01T00:00:00.000Z'").run();
+  const pairs=db.prepare('SELECT * FROM assignments ORDER BY year,giver').all();
+  const mail=db.prepare('SELECT * FROM outbox ORDER BY id').all();
+  // Version 0.2 databases contain these records without an enrollment message column.
+  db.exec('ALTER TABLE enrollments DROP COLUMN message');
+  const migrated=openDatabase(dir);
+  try {
+    assert.deepEqual(migrated.prepare('SELECT * FROM assignments ORDER BY year,giver').all(),pairs);
+    assert.deepEqual(migrated.prepare('SELECT * FROM outbox ORDER BY id').all(),mail);
+    const row=members(migrated,2026).find(p=>p.id===person.id);
+    assert.equal(row.wishlist,'Legacy wish list');assert.equal(row.message,'');
+    assert.deepEqual(row.gifts,[{label:'Legacy book',url:'https://example.test/legacy'}]);
+    assert.equal(migrated.prepare('SELECT state FROM exchanges WHERE year=2026').get().state,'locked');
+  } finally {migrated.close();}
 });

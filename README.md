@@ -1,7 +1,7 @@
 # Ornament
 
 Self-hosted Secret Santa for family and friends.
-Draw names, share wish lists, and keep matches private.
+Share one group link, collect wish lists, then draw names and email matches.
 
 - Avoids matches from the previous two years.
 - Organizer controls people, exclusions, draws, and email.
@@ -20,9 +20,10 @@ node scripts/password.js
 npm run dev
 ```
 
-Open [localhost:3080/admin](http://localhost:3080/admin) to set up an exchange
-and add participant emails. Share the homepage URL with the group.
-Email starts in preview mode; enable SMTP for requested sign-in links.
+Open [localhost:3080/admin](http://localhost:3080/admin) to set up an exchange.
+Copy **Group link** and share it privately. People enter their name, email,
+wish list, message to their gifter, and product links without signing in.
+Review submissions before drawing names. Email starts in preview mode.
 
 ## Self-host
 

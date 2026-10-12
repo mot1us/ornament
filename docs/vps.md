@@ -1,7 +1,7 @@
 # VPS setup
 
 Ornament uses a prebuilt image from `ghcr.io/mot1us/ornament`, available for
-AMD64 and ARM64. Family records and credentials stay on your VPS. GitHub
+AMD64 and ARM64. The database and credentials stay on your VPS. GitHub
 publishes the software; Dockhand pulls it without a GitHub account connection.
 
 ## Dockhand
@@ -36,11 +36,13 @@ The external Docker network `pangolin_frontend` must already exist. Route your
 hostname to `ornament:3080` on that network and enable HTTPS. No app port is
 published directly on the VPS.
 
-The shared homepage and email sign-in links use Ornament's own authentication.
-Leave the family routes accessible through Pangolin; you can add separate
-protection to `/admin`.
-Visit `/admin` to set up your exchange and add a separate email address for each
-participant. Share your homepage URL with everyone once email is configured.
+Leave the family routes accessible through Pangolin; the private group link
+grants access to the submission form. Organizer access requires Ornament's
+password. You can add separate Pangolin protection to `/admin`.
+Visit `/admin`, set up an exchange, then copy **Group link** and share it
+privately. People can submit without email being configured. Review each
+submission and approve it against an existing person or a new participant
+before drawing names. Keep historical identities when matching prior years.
 
 ## Private data
 
@@ -63,19 +65,34 @@ settings to Dockhand and deploy again:
 ```dotenv
 EMAIL_MODE=smtp
 SMTP_HOST=smtp.your-provider.example
-SMTP_PORT=587
+SMTP_PORT=465
 SMTP_USER=your-smtp-user
 SMTP_PASSWORD=your-smtp-password
 SMTP_FROM=Ornament <santa@your-domain.example>
 ```
 
-Mark `SMTP_PASSWORD` as a secret. Port 587 uses STARTTLS; 465 uses TLS.
-Verify the sender with your provider. Review addresses and messages in
-**Email** before explicitly sending; preview messages are never sent
-automatically. Requested sign-in links are sent immediately in SMTP mode; they
-never trigger invitation or assignment batches. In preview mode, find sign-in
-messages in **Email → Preview**. Links expire after 15 minutes and work once.
+Mark `SMTP_PASSWORD` as a secret. Port 465 uses TLS; 587 uses STARTTLS.
+Verify the sender with your provider and test with your own address first.
+For a non-Google relay, Oracle Cloud Email Delivery works over SMTP: use your
+region's endpoint, generated SMTP credentials, and approved sender. Follow
+[Oracle's setup steps](https://docs.oracle.com/en-us/iaas/Content/Email/Reference/gettingstarted.htm)
+and [SMTP configuration](https://docs.oracle.com/en-us/iaas/Content/Email/Reference/gettingstarted_topic-Configure_the_SMTP_connection.htm).
+These credentials are separate from your Oracle console password.
+If you require zero cost, check your account's available sending quota and
+eligibility before setting it up. Oracle's published Always Free allowance and
+service-limit table conflict; do not assume a Free Tier account can send email
+without an upgrade. Use another free SMTP relay if your account requires payment.
+
+Review addresses and messages in **Email** before explicitly sending match
+emails. They include the recipient's name, wish list, message, and product
+links. The SMTP relay and recipients' mail providers process those contents.
 The app does not install a VPS mail server.
+
+Preview messages are never sent automatically. Optional email sign-in at
+`/join` sends requested links immediately in SMTP mode, without sending any
+invitation or assignment batch. In preview mode, find these links in
+**Email → Preview**. They expire after 15 minutes and work once. This sign-in
+flow is not required for group-link submissions.
 
 ## Backups and updates
 

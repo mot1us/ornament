@@ -7,6 +7,7 @@ import { createExchange, savePerson, emailValid, matchingOptions, historyReadine
 import { secret, hash, passwordMatches, readConfig } from './security.js';
 import { createMailer } from './mail.js';
 import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
+import { groupLink, submissionProfile, saveSubmission, listSubmissions, approveSubmission, rejectSubmission } from './submissions.js';
 
 export function createApp(config,db,providedTransport) {
   const app = express();
@@ -30,7 +31,7 @@ export function createApp(config,db,providedTransport) {
   app.use('/api',(req,res,next)=>{
     const value = (req.headers.cookie || '').split(';').map(p=>p.trim()).find(p=>p.startsWith('santa_session='))?.slice(14);
     req.session = value && db.prepare('SELECT * FROM sessions WHERE hash=? AND expires>?').get(hash(value),Date.now());
-    if (req.session && ['POST','PUT','PATCH','DELETE'].includes(req.method) && !['/login','/redeem','/sign-in'].includes(req.path)) {
+    if (req.session && ['POST','PUT','PATCH','DELETE'].includes(req.method) && !['/login','/redeem','/sign-in','/group/redeem'].includes(req.path.toLowerCase())) {
       if (req.get('x-csrf-token') !== req.session.csrf) return res.status(403).json({error:'Refresh the page and try again.'});
     }
     next();
@@ -82,6 +83,20 @@ export function createApp(config,db,providedTransport) {
     if (!result) return res.status(401).json({error:'This link is invalid or expired. Request a new link from the homepage.'});
     res.json(result);
   });
+  app.post('/api/group/redeem',limiter,(req,res)=>{
+    const token=typeof req.body.token==='string'?req.body.token:'';
+    const invite=token.length===43 && db.prepare('SELECT year FROM group_tokens WHERE hash=? AND expires>?').get(hash(token),Date.now());
+    if (!invite) return res.status(401).json({error:'This group link is invalid or expired. Ask your organizer for a new one.'});
+    if (req.session?.role==='submission' && req.session.year===invite.year) {
+      return res.json({role:'submission',csrf:req.session.csrf,year:invite.year});
+    }
+    mutable(db,invite.year);
+    const result=transaction(db,()=>{
+      if (req.session) db.prepare('DELETE FROM sessions WHERE hash=?').run(req.session.hash);
+      return makeSession(res,'group',null,invite.year);
+    });
+    res.json(result);
+  });
   app.get('/api/session',(req,res)=>{
     if (!req.session) return res.status(401).json({error:'Please sign in.'});
     res.json({role:req.session.role,csrf:req.session.csrf,year:req.session.year});
@@ -100,7 +115,7 @@ export function createApp(config,db,providedTransport) {
     const year = Number(req.query.year || exchanges[0]?.year);
     const exchange = exchanges.find(e=>e.year===year) || null;
     const people = exchange ? members(db,year) : [];
-    res.json({exchanges,year,exchange,people,
+    res.json({exchanges,year,exchange,people,identities:db.prepare('SELECT id,name FROM people ORDER BY name COLLATE NOCASE').all(),submissions:exchange?listSubmissions(db,year):[],
       exclusions:exchange ? matchingOptions(db,year).exclusions : [],
       assignments:exchange ? db.prepare('SELECT giver,recipient FROM assignments WHERE year=?').all(year) : [],
       history:exchange ? historyReadiness(db,year) : [],
@@ -181,12 +196,24 @@ export function createApp(config,db,providedTransport) {
     lockDraw(db,Number(req.body.year));res.json({ok:true});
   });
   app.post('/api/admin/link',(req,res)=>res.json({link:inviteLink(db,config,Number(req.body.year),req.body.personId)}));
+  app.post('/api/admin/group-link',(req,res)=>res.json({link:groupLink(db,config,Number(req.body.year))}));
+  app.post('/api/admin/group-revoke',(req,res)=>{
+    const year=Number(req.body.year);getExchange(db,year);
+    transaction(db,()=>{
+      db.prepare('DELETE FROM group_tokens WHERE year=?').run(year);
+      db.prepare("DELETE FROM sessions WHERE role='group' AND year=?").run(year);
+      audit(db,'revoke-group-links',{year});
+    });res.json({ok:true});
+  });
+  app.post('/api/admin/submissions/approve',(req,res)=>res.json({ok:true,personId:approveSubmission(db,req.body.id,req.body.personId)}));
+  app.post('/api/admin/submissions/reject',(req,res)=>{rejectSubmission(db,req.body.id);res.json({ok:true});});
   app.post('/api/admin/revoke',(req,res)=>{
     const year = Number(req.body.year);
     transaction(db,()=>{
       db.prepare('DELETE FROM invite_tokens WHERE year=? AND person_id=?').run(year,req.body.personId);
       db.prepare('DELETE FROM sign_in_tokens WHERE year=? AND person_id=?').run(year,req.body.personId);
       db.prepare("DELETE FROM sessions WHERE role='member' AND year=? AND person_id=?").run(year,req.body.personId);
+      db.prepare("DELETE FROM sessions WHERE role='submission' AND year=? AND person_id IN (SELECT id FROM submissions WHERE year=? AND person_id=?)").run(year,year,req.body.personId);
       audit(db,'revoke-links',{year,personId:req.body.personId});
     });res.json({ok:true});
   });
@@ -207,6 +234,25 @@ export function createApp(config,db,providedTransport) {
     db.prepare("UPDATE outbox SET status='pending',error='',recipient_email=? WHERE id=?").run(person.email,row.id);
     audit(db,'queue-retry',{id:row.id,previous:row.status});res.json({ok:true});
   });
+  app.use('/api/group',(req,res,next)=>{
+    if (!['group','submission'].includes(req.session?.role)) return res.status(403).json({error:'Open the group link your organizer shared.'});
+    next();
+  });
+  app.get('/api/group/profile',(req,res)=>{
+    const {year,role,person_id:id}=req.session;
+    const exchange=getExchange(db,year);
+    res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state},
+      submission:role==='submission'?submissionProfile(db,year,id):null});
+  });
+  app.post('/api/group/profile',(req,res)=>{
+    const {year,role,person_id:id}=req.session;
+    const submissionId=saveSubmission(db,year,role==='submission'?id:null,req.body);
+    if (role==='submission') return res.json({role,csrf:req.session.csrf,year});
+    const result=transaction(db,()=>{
+      db.prepare('DELETE FROM sessions WHERE hash=?').run(req.session.hash);
+      return makeSession(res,'submission',submissionId,year);
+    });res.json(result);
+  });
   app.use('/api/member',(req,res,next)=>{
     if (req.session?.role!=='member') return res.status(403).json({error:'Sign in from the homepage.'});
     next();
@@ -221,18 +267,20 @@ export function createApp(config,db,providedTransport) {
     if (exchange.state==='locked') {
       const pair = db.prepare('SELECT recipient FROM assignments WHERE year=? AND giver=?').get(year,id);
       const target = pair && all.find(p=>p.id===pair.recipient);
-      if (target) recipient={name:target.name,wishlist:target.wishlist,gifts:target.gifts};
+      if (target) recipient={name:target.name,wishlist:target.wishlist,message:target.message,gifts:target.gifts};
     }
     res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state},
-      person:{name:person.name,active:Boolean(person.active),wishlist:person.wishlist,gifts:person.gifts},recipient});
+      person:{name:person.name,active:Boolean(person.active),wishlist:person.wishlist,message:person.message,gifts:person.gifts},recipient});
   });
   app.post('/api/member/profile',(req,res)=>{
     const {year,person_id:id}=req.session;
     if (!db.prepare('SELECT person_id FROM enrollments WHERE year=? AND person_id=?').get(year,id)) throw new Error('Participant not found.');
     const current=getExchange(db,year);
     if (current.state==='archived') throw new Error('This exchange is archived.');
+    const wishlist=String(req.body.wishlist||'').slice(0,5000),message=String(req.body.message||'').slice(0,2000),gifts=JSON.stringify(giftList(req.body.gifts||[]));
     transaction(db,()=>{
-      db.prepare('UPDATE enrollments SET wishlist=?,gifts=? WHERE year=? AND person_id=?').run(String(req.body.wishlist||'').slice(0,5000),JSON.stringify(giftList(req.body.gifts||[])),year,id);
+      db.prepare('UPDATE enrollments SET wishlist=?,message=?,gifts=? WHERE year=? AND person_id=?').run(wishlist,message,gifts,year,id);
+      db.prepare("UPDATE submissions SET wishlist=?,message=?,gifts=?,updated_at=CURRENT_TIMESTAMP WHERE year=? AND person_id=? AND status='approved'").run(wishlist,message,gifts,year,id);
       audit(db,'save-wishlist',{year,id});
     });res.json({ok:true});
   });

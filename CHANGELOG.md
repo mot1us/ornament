@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Collect names, emails, wish lists, messages, and product links through one private group link, without a sign-in email.
+- Review submissions against existing identities before drawing; keep each saved form private to its browser.
+- Include the recipient’s message and gift ideas in match emails; preserve existing links, draws, and email records.
+
 ## 0.2.0
 
 - Share one group URL; participants request an email sign-in link from the homepage.

@@ -1,7 +1,8 @@
 # Data and delivery behavior
 
 People have permanent random IDs, a display name, alternate names, and an email
-address. Annual enrollments hold participation, wish lists, and gift ideas.
+address. Annual enrollments hold participation, wish lists, messages to gifters,
+and gift ideas with product links.
 Each year has independent settings, exclusions, and assignments. The latest two
 calendar years' giver-to-recipient edges are excluded even if their history is
 still provisional. A draw can be drafted with incomplete history but cannot be
@@ -33,13 +34,30 @@ duplicate sends but cannot rule out a duplicate after an incorrect manual
 retry decision. `sent` means the provider accepted the message, not proof that
 the recipient opened it or that it avoided spam.
 
+The organizer shares one random, unguessable **Group link** for an exchange.
+It opens a form for a name, email, wish list, message to the gifter, and product
+links. Submission requires no account or email verification. A private browser
+session lets someone return to their own form for 30 days. The group link never
+reveals the roster, other submissions, email addresses, or matches.
+
+Submissions wait for organizer review. The organizer maps each one to a stable
+person, checks the email and content, then chooses **Approve wish list** or
+**Decline**. Review submissions before finalizing the draw. Once approved, the
+family form can change only that person's wishes, message, and product links;
+it cannot change the accepted identity or email. The shared link is intended
+for a trusted group: anyone who receives it can submit a form, and email
+ownership is not verified by this flow.
+
 Invitation and assignment messages include a private personal link. Assignment
-emails also snapshot the recipient's current wish list at preparation time.
-The personal page shows the recipient's latest saved wish list. Existing
-prepared messages remain unchanged by later wish-list edits.
+emails contain the recipient's name, wish list, message to the gifter, and
+product links as a snapshot taken when messages are prepared. The personal
+page shows the recipient's latest saved content. Later edits do not change
+already prepared messages. The SMTP provider and the recipient's mail provider
+process these emails; their contents are not confined to the self-hosted database.
 
 Organizer authentication uses a server-side session and scrypt password hash.
-The shared homepage sends a sign-in link only to a known, active participant in
+Existing personal links remain supported. The optional email sign-in page at
+`/join` sends a sign-in link only to a known, active participant in
 the latest open, drafted, or finalized exchange. Responses do not disclose
 whether an email is on the roster. Each person needs a separate email address.
 Email sign-in tokens are random and hashed in SQLite, work once, and expire in
@@ -49,9 +67,11 @@ failed or uncertain links are not retried automatically. Request a new link.
 Existing organizer-issued personal links remain valid and can be revoked, along
 with email sign-in links and sessions. Secure HttpOnly SameSite cookies,
 CSRF tokens, origin checks, and a restrictive content security policy protect
-browser requests. Family API responses contain only the person's own wish list
-and the name, wish list, and gift ideas of their recipient after finalization.
-They contain no list of other family members, email addresses, or incoming giver.
+browser requests. Family member API responses contain only the person's own
+content and the name, wish list, message, and gift ideas of their recipient after
+finalization. Group submission sessions expose only their own form, including
+after the draw. Neither exposes a list of other family members, their email
+addresses, or the incoming giver.
 
 The organizer export includes people, rosters, matching settings, exclusions,
 and assignments. It omits session credentials and prepared email bodies. Full
