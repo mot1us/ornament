@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -45,6 +45,36 @@ test('organizer login, CSRF, and origin restrictions protect private admin data'
   assert.equal((await call('/admin/exchanges',{year:2026},{...admin,headers:{Origin:'https://attacker.test'}})).status,403);
   assert.equal((await call('/login',{password:'wrong'})).status,401);
   assert.equal((await call('/admin/exchanges',{year:2026},admin)).status,200);
+});
+test('artwork caching does not cache authenticated profiles or organizer data',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);
+  const artwork=readdirSync(new URL('../public/',import.meta.url)).filter(name=>name.endsWith('.webp'));
+  assert.ok(artwork.length);
+  const legacy=await fetch(`${config.publicUrl}/christmas-friends.png`,{redirect:'manual'});
+  assert.equal(legacy.status,302);
+  assert.ok(artwork.includes(legacy.headers.get('location').slice(1)));
+  for(const file of artwork) {
+    const image=await fetch(`${config.publicUrl}/${file}`);
+    assert.equal(image.status,200);
+    assert.equal(image.headers.get('content-type'),'image/webp');
+    assert.equal(image.headers.get('cache-control'),'public, max-age=31536000, immutable');
+    assert.equal(image.headers.get('set-cookie'),null);
+    await image.arrayBuffer();
+    const conditional=await fetch(`${config.publicUrl}/${file}`,{cache:'force-cache',headers:{'If-None-Match':image.headers.get('etag')}});
+    assert.equal(conditional.status,304);
+    assert.equal(conditional.headers.get('cache-control'),image.headers.get('cache-control'));
+  }
+  const link=inviteLink(db,config,2026,members(db,2026)[0].id);
+  const member=await call('/redeem',{token:new URL(link).hash.slice(1)});
+  for(const [path,cookie,status] of [
+    ['/api/admin/state',admin.cookie,200],['/api/member/profile',member.cookie,200],
+    ['/api/admin/state','',403],['/api/member/profile','',403],['/','',200],['/app.js','',200],
+  ]) {
+    const response=await fetch(`${config.publicUrl}${path}`,{headers:{Cookie:cookie}});
+    assert.equal(response.status,status);
+    assert.equal(response.headers.get('cache-control'),'no-store');
+    await response.text();
+  }
 });
 test('personal links scope access to one person, hide unfinalized recipients, and can be revoked',async t=>{
   const {db,config,call,admin}=await fixture(t);seed(db);

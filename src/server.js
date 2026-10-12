@@ -286,7 +286,13 @@ export function createApp(config,db,providedTransport) {
   });
   app.use('/api',(_req,res)=>res.status(404).json({error:'Endpoint not found.'}));
   const publicDir=fileURLToPath(new URL('../public/',import.meta.url));
-  app.use(express.static(publicDir,{maxAge:0}));
+  app.get('/christmas-friends.png',(_req,res)=>res.redirect('/christmas-friends-1200.3ac4a7fd0f0f.webp'));
+  app.use(express.static(publicDir,{maxAge:0,setHeaders(res,path){
+    // Only fingerprinted public artwork may be reused without revalidation.
+    if (/\/christmas-friends-(480|1200)\.[a-f0-9]{12}\.webp$/.test(path)) {
+      res.setHeader('Cache-Control','public, max-age=31536000, immutable');
+    }
+  }}));
   for (const route of ['/','/admin','/join']) app.get(route,(_req,res)=>res.sendFile(resolve(publicDir,'index.html')));
   app.use((error,_req,res,_next)=>{
     if (error.type==='entity.parse.failed') return res.status(400).json({error:'Invalid JSON.'});

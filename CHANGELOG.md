@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1
+
+- Remove decorative slogans and shorten participant instructions, keeping the letter-to-Santa design and animations.
+- Serve responsive WebP artwork, load family artwork early, and cache fingerprinted images without caching private data.
+
 ## 0.5.0
 
 - Give wish lists a Charlie Brown Christmas look, with new artwork, handwritten headings, snowy colors, and a letter to Santa.

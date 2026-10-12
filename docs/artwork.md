@@ -1,8 +1,19 @@
 # Christmas artwork
 
-The family view uses `public/christmas-friends.png`, generated with the built-in
-image generation tool for the requested Charlie Brown Christmas redesign.
-It replaces the previous clay Christmas illustration in the interface.
+The original illustration is preserved in `assets/christmas-friends.png`, generated
+with the built-in image generation tool for the requested Charlie Brown Christmas
+redesign. It replaces the previous clay Christmas illustration in the interface.
+
+The app serves transparent WebP variants at 480 and 1200 pixels wide, instead of
+the 2.1 MB PNG. They are about 51 KB and 210 KB. Responsive sizing chooses the
+smaller variant for the family view on phones. High fetch priority and an early
+family-view preload start the download before profile requests finish. Only
+content-fingerprinted artwork uses a long-lived public cache; private API
+responses keep `no-store`. New artwork content gets a new filename.
+
+To recreate the variants, resize the source with Lanczos resampling and encode
+as WebP at quality 85, method 6, preserving transparency. Filenames include the
+first 12 hex digits of the encoded file's SHA-256. Pillow supports this workflow.
 
 The Short Stack display font is served locally from `public/fonts/`. Its original
 [SIL Open Font License](../public/fonts/OFL-ShortStack.txt) is included. Source:

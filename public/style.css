@@ -57,8 +57,6 @@ main { max-width: 1240px; margin: auto; padding: 36px 32px 64px; }
 .home-card p { max-width: 360px; }
 .home-art { position: relative; text-align: center; animation: page-arrive 750ms 90ms both; }
 .holiday-friends { display: block; width: 100%; height: auto; }
-.home-art .art-note { position: static; display: block; transform: rotate(-5deg); margin: 12px 0 -20px; }
-.home-caption { font: .82rem/1.8 "Short Stack", cursive; color: var(--green); margin: 0 auto; }
 .home-invitation { display: flex; align-items: center; gap: 16px; border: 1px dashed #94aa97; background: #fffdf599; border-radius: 9px 16px 11px 14px; padding: 16px; margin-top: 28px; }
 .home-invitation svg { width: 44px; flex-shrink: 0; color: #f8e6ad; transform: rotate(-8deg); }
 .home-invitation p { margin: 0; font-size: .85rem; }
@@ -140,7 +138,6 @@ th { color: var(--muted); font-weight: 400; }
 .family-intro { color: #56685e; font-size: .96rem; max-width: 355px; line-height: 1.75; }
 .family-art { position: relative; margin: 8px -12px 22px; }
 .family-art .holiday-friends { max-width: 450px; }
-.art-note { display: block; text-align: center; font: .74rem/1.8 "Short Stack", cursive; color: var(--green); transform: rotate(-4deg); }
 .exchange-details { display: flex; flex-wrap: wrap; gap: 28px; margin-top: 24px; padding-top: 18px; border-top: 1px dashed #9bb2a2; font: 1.05rem/1.5 "Short Stack", cursive; }
 .exchange-details small { display: block; font: .72rem/1.8 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--muted); margin-bottom: 5px; }
 .family-steps { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 12px 20px; font-size: .72rem; color: #66766e; margin: 26px 0 0; }
@@ -152,12 +149,9 @@ th { color: var(--muted); font-weight: 400; }
 .family-content { min-width: 0; position: relative; animation: page-arrive 650ms 90ms both; }
 .family-card { position: relative; padding: 30px 32px; background: var(--white); border: 1.5px solid #6a7d69; border-radius: 10px 22px 14px 20px; box-shadow: 5px 6px 0 #e8d9a4, 5px 6px 0 1px #97a78a, 0 20px 40px #3c584310; animation: letter-arrive 500ms cubic-bezier(.22,1,.36,1) both; }
 .letter-heading { display: flex; justify-content: space-between; gap: 16px; align-items: start; padding-bottom: 22px; margin-bottom: 24px; border-bottom: 1px dashed #9bab96; }
-.letter-heading .eyebrow { font-size: .6rem; color: var(--green); letter-spacing: .12em; margin: 0 0 12px; }
 .letter-heading h2 { font-size: 1.8rem; letter-spacing: -.05em; margin-bottom: 6px; }
-.letter-heading p:last-child { font-size: .84rem; color: #66766e; margin: 0; }
 .postage-stamp { display: grid; justify-items: center; align-content: center; width: 66px; min-width: 66px; height: 82px; border: 2px dotted #607f5c; outline: 1px solid #94aa89; outline-offset: -6px; background: #e5eddc; color: var(--green); transform: rotate(7deg); }
 .postage-stamp svg { width: 29px; height: 40px; }
-.postage-stamp small { font-size: .42rem; letter-spacing: .08em; margin-top: 5px; }
 .form-section { margin: 0 0 22px; padding: 0 0 22px; border-bottom: 1px dashed var(--line); }
 .form-section legend { font: 1.04rem/1.5 "Short Stack", cursive; margin-bottom: 14px; padding: 0; }
 .wishlist-form label { font-size: .8rem; margin-bottom: 0; color: #455a4b; }
@@ -269,7 +263,6 @@ dialog[open]::backdrop { animation: page-arrive 180ms both; }
   .home-copy { max-width: 440px; }
   .home-card h1 { font-size: clamp(2.55rem, 10vw, 3.5rem); margin: 22px 0; }
   .home-art { max-width: 450px; margin: auto; }
-  .home-art .art-note { margin: 0 0 -12px; }
   .home-help { margin-top: 22px; }
   .login-card { margin: 24px auto; padding: 24px; }
   .dash-heading, .section-heading, .finalize-bar { align-items: flex-start; flex-direction: column; }
@@ -284,14 +277,12 @@ dialog[open]::backdrop { animation: page-arrive 180ms both; }
   .family-heading h1 { grid-column: 1 / -1; font-size: clamp(2.15rem, 8.8vw, 3rem); max-width: 400px; margin-bottom: 14px; }
   .family-intro { font-size: .88rem; max-width: 350px; padding-right: 8px; margin-bottom: 0; }
   .family-art { grid-column: 2; align-self: center; width: 139px; margin: 0 -7px; }
-  .family-art .art-note { display: none; }
   .exchange-details { grid-column: 1 / -1; margin-top: 20px; gap: 24px; justify-content: center; text-align: center; font-size: .95rem; }
   .family-steps { grid-column: 1 / -1; justify-content: center; margin-top: 22px; gap: 12px; font-size: .67rem; }
   .saved-seal { grid-column: 1 / -1; width: 36px; height: 36px; font-size: 1.2rem; margin-bottom: 16px; }
   .family-card { padding: 26px 21px 24px; box-shadow: 3px 4px 0 #e8d9a4, 3px 4px 0 1px #97a78a; }
   .letter-heading { margin-bottom: 22px; padding-bottom: 20px; }
   .letter-heading h2 { font-size: 1.6rem; }
-  .letter-heading .eyebrow { font-size: .53rem; }
   .postage-stamp { width: 58px; min-width: 58px; height: 74px; }
   .wishlist-form .form-row { gap: 14px; }
   .form-section legend { font-size: 1rem; }
