@@ -82,7 +82,7 @@ SMTP_HOST=smtp.your-provider.example
 SMTP_PORT=587
 SMTP_USER=your-smtp-user
 SMTP_PASSWORD=your-smtp-password
-SMTP_FROM=Family Secret Santa <santa@your-domain.example>
+SMTP_FROM=Ornament <santa@your-domain.example>
 ```
 
 Port 587 requires STARTTLS; port 465 uses TLS from the start. Certificate

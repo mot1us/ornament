@@ -1,4 +1,4 @@
-# Working on Secret Santa
+# Working on Ornament
 
 Develop locally, run the required checks, then commit and push the requested
 changes to the configured GitHub remote. This workflow is authorized by the

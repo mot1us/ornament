@@ -230,7 +230,7 @@ if (process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)
   process.umask(0o077);
   const config=readConfig();
   const db=openDatabase(config.dataDir);
-  const server=createApp(config,db).listen(config.port,config.host,()=>console.log(`Secret Santa: ${config.publicUrl} · email mode: ${config.emailMode}`));
+  const server=createApp(config,db).listen(config.port,config.host,()=>console.log(`Ornament: ${config.publicUrl} · email mode: ${config.emailMode}`));
   const stop=()=>{server.close(()=>{db.close();process.exit(0);});};
   process.on('SIGTERM',stop);process.on('SIGINT',stop);
 }

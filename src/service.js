@@ -130,7 +130,7 @@ export function makeEmail(db,config,year,personId,kind) {
   const link = inviteLink(db,config,year,personId);
   const details = [exchange.budget && `Gift budget: ${exchange.budget}`, exchange.event_date && `Exchange date: ${exchange.event_date}`].filter(Boolean).join('\n');
   if (kind === 'invite') return {email:person.email,subject:`Your invitation · ${exchange.title}`,
-    body:`Hi ${person.name},\n\nOur family Secret Santa is getting started. Use your personal link to add your wish list and gift ideas:\n\n${link}\n\n${details}\n\nKeep this link private: it opens your personal page.\n\nHappy gifting!`};
+    body:`Hi ${person.name},\n\nOur Secret Santa is getting started. Use your personal link to add your wish list and gift ideas:\n\n${link}\n\n${details}\n\nKeep this link private: it opens your personal page.\n\nHappy gifting!`};
   const pair = db.prepare('SELECT recipient FROM assignments WHERE year=? AND giver=?').get(year,personId);
   const recipient = members(db,year).find(p=>p.id===pair.recipient);
   const gifts = recipient.gifts.map(g=>[g.label,g.url].filter(Boolean).join(': ')).join('\n');

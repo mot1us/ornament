@@ -21,7 +21,7 @@ document.querySelector('#logout').addEventListener('click',async()=>{await api('
 
 function home() {
   if(session?.role==='member'){location.replace('/join');return;}
-  app.innerHTML=`<section class="home-card"><div class="home-copy"><p class="eyebrow">SECRET SANTA</p><h1>Your Christmas<br>wish list.</h1><p>Open your personal link to add your gift ideas.</p><p class="home-help">Need a link? Ask the organizer.</p></div><img class="holiday-toys" src="/holiday-clay.png" alt="Santa, a little reindeer, and a silver tinsel tree" width="520" height="347"></section>`;
+  app.innerHTML=`<section class="home-card"><div class="home-copy"><p class="eyebrow">SECRET SANTA FOR FAMILY &amp; FRIENDS</p><h1>Your Christmas<br>wish list.</h1><p>Open your personal link to add your gift ideas.</p><p class="home-help">Need a link? Ask the organizer.</p></div><img class="holiday-toys" src="/holiday-clay.png" alt="Santa, a little reindeer, and a silver tinsel tree" width="520" height="347"></section>`;
 }
 function login(message='') {
   app.innerHTML=`<section class="login-card"><h1>Organizer</h1>${message?`<p class="inline-error">${esc(message)}</p>`:''}<form data-form="login"><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">Sign in</button></form></section>`;

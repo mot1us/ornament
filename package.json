@@ -1,5 +1,6 @@
 {
-  "name": "family-secret-santa",
+  "name": "ornament",
+  "description": "Self-hosted Secret Santa for family and friends.",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",

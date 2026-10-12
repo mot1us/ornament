@@ -1,12 +1,12 @@
-# Secret Santa
+# Ornament
 
-A free, self-hosted Secret Santa app. Open your private link, add a wish list,
-and see your match after the draw.
+Self-hosted Secret Santa for family and friends.
+Draw names, share wish lists, and keep matches private.
 
 - Avoids matches from the previous two years.
 - Organizer controls people, exclusions, draws, and email.
 - Private SQLite data and daily backups on your server.
-- [MIT licensed](LICENSE). Each household runs its own instance.
+- Free and [MIT licensed](LICENSE). Each group runs its own instance.
 
 ## Run locally
 
