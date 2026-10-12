@@ -25,6 +25,7 @@ jobs:
           node-version: '24.16.0'
       - run: docker compose --env-file /dev/null config --quiet
       - run: docker compose --env-file /dev/null -f compose.yaml -f compose.build.yaml config --quiet
+      - run: docker compose --env-file /dev/null -f compose.yaml -f compose.auto-update.yaml config --quiet
       - run: docker build --tag ornament:check .
       - run: node test/container-smoke.js ornament:check
   publish:
@@ -92,3 +93,16 @@ jobs:
           docker pull "$IMAGE@$DIGEST"
           node test/container-smoke.js "$IMAGE@$DIGEST"
           echo "Published $IMAGE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+      - name: Promote the checked release to latest
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$current_sha" != "$GITHUB_SHA" ]; then
+            echo "A newer commit is on main; leaving latest unchanged." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$DIGEST"
+          echo "Promoted $IMAGE@$DIGEST to latest" >> "$GITHUB_STEP_SUMMARY"

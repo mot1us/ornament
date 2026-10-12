@@ -28,8 +28,9 @@ Review submissions before drawing names. Email starts in preview mode.
 ## Self-host
 
 Paste [compose.yaml](compose.yaml) into a regular Dockhand stack, then follow
-the [VPS setup](docs/vps.md). It pulls a versioned Docker image; no GitHub account
-connection is needed. Keep credentials, family records, and backups on your VPS.
+the [VPS setup](docs/vps.md). Choose a pinned release or checked `latest` images
+with Dockhand updates; no GitHub account connection is needed. Keep credentials,
+family records, and backups on your VPS.
 
 [Import history](docs/history.md) · [App behavior](docs/behavior.md) · [Changelog](CHANGELOG.md)
 

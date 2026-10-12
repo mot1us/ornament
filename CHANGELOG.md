@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+
+- Promote checked releases to latest after published-image verification, keeping versioned images for rollback.
+- Add an automatic-update Compose option and instructions for Ornament-only Dockhand schedules.
+
 ## 0.4.1
 
 - Send a first wish list to Santa, show a clear confirmation, and keep Edit wish list with Save changes for later updates.

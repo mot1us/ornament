@@ -1,0 +1,7 @@
+# Optional override: follow releases after CI and published-image checks pass.
+# Use with compose.yaml, preserving the existing stack name and volumes.
+services:
+  ornament:
+    image: ghcr.io/mot1us/ornament:latest
+  ornament-backup:
+    image: ghcr.io/mot1us/ornament:latest

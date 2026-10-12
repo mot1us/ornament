@@ -9,7 +9,7 @@ publishes the software; Dockhand pulls it without a GitHub account connection.
 1. Open your VPS environment → **Stacks → Create Stack**.
 2. Name it `ornament` and paste [compose.yaml](../compose.yaml) into the editor.
 3. Add the settings below in Dockhand's environment panel.
-4. Validate, then **Create & Start**. Keep automatic updates off.
+4. Validate, then **Create & Start**. For automatic updates, follow the section below.
 
 Generate the organizer password hash locally from this checkout:
 
@@ -103,7 +103,23 @@ and storage, and arrange encrypted off-VPS copies with your backup service.
 Back up before updating. After a release's GitHub checks pass, change **both**
 image tags in Dockhand's Compose editor to that release and deploy. Keep the
 volumes. Use a published digest instead of a tag if you want an immutable pin.
-Avoid `latest` and automatic deployment.
+
+To follow checked releases, merge [compose.auto-update.yaml](../compose.auto-update.yaml)
+into your stack: both services use `ghcr.io/mot1us/ornament:latest`.
+For the CLI, use `docker compose -f compose.yaml -f compose.auto-update.yaml up -d --pull always`.
+In Dockhand, save the complete merged Compose file and redeploy with image pulling
+enabled. Keep the stack name, saved environment variables, and existing volumes.
+
+Enable automatic image updates on each Ornament container in its editor's
+**Settings** tab. Set a daily schedule in your timezone; use different times for
+the app and backup container. Manage these schedules on **Schedules**. This keeps
+the schedule specific to Ornament. Manual **Check for updates** and redeployment
+remain available. See [Dockhand's update documentation](https://dockhand.pro/manual/#checking-for-updates).
+
+Image updates briefly restart each container and preserve its configuration and
+volumes. They never draw names or send prepared email batches. New Compose settings
+still require a stack edit. To stop following releases, turn off both schedules
+and replace both image references with a published version or digest.
 
 When upgrading from 0.1.4, stop the existing stack first. Replace its Compose
 file with this release, retain the saved environment settings, and redeploy
@@ -139,8 +155,10 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ## Publishing images
 
 Pushes to `main` publish the package version only after app, Compose, and
-container checks pass. CI uses GitHub's built-in token; it needs no VPS or
-SMTP credentials. Existing release tags are preserved.
+container checks pass. The published image is smoke-tested before the current
+`main` release is promoted to `latest`. Older, superseded runs cannot promote
+their release. CI uses GitHub's built-in token; it needs no VPS or SMTP credentials.
+Existing version and commit image tags are preserved.
 
 For the first publication, the repository owner must make the package public:
 open the **Ornament package → Package settings → Change visibility → Public**.
