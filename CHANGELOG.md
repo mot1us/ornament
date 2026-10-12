@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- Give wish lists a Charlie Brown Christmas look, with new artwork, handwritten headings, snowy colors, and a letter to Santa.
+- Animate sending, editing, gift ideas, match reveals, buttons, and dialogs; honor reduced-motion preferences.
+- Keep artwork and the open-license display font on the app's own server.
+
 ## 0.4.2
 
 - Promote checked releases to latest after published-image verification, keeping versioned images for rollback.

@@ -34,6 +34,9 @@ family records, and backups on your VPS.
 
 [Import history](docs/history.md) · [App behavior](docs/behavior.md) · [Changelog](CHANGELOG.md)
 
+The family view is a hand-drawn Christmas letter with playful transitions and
+reduced-motion support. [Artwork and font notes](docs/artwork.md).
+
 ## Check changes
 
 ```sh
