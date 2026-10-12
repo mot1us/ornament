@@ -1,6 +1,7 @@
 .git
 .github
 .env
+.env.*
 node_modules
 data
 backups

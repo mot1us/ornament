@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+- Pass Dockhand settings and secrets into the app without requiring a local
+  environment file in the Git checkout.
+- Document deployment and updates through Dockhand with Pangolin routing.
+- Keep Dockhand-generated environment files out of Git and Docker build context.
+- Validate the Compose configuration in CI.
+
 ## 0.1.2
 
 - Update VPS setup instructions for the renamed mot1us/ornament repository.

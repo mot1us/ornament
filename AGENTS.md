@@ -9,6 +9,9 @@ documentation, and instruction changes. Default to a patch increment. Keep
 package.json and package-lock.json in sync, add a concise CHANGELOG.md entry,
 and include the version in the delivery commit message and final response.
 
+For this deployment, provide instructions using Dockhand and Pangolin. The user
+performs VPS actions; keep deployment settings in Dockhand on the private VPS.
+
 Run `npm run check` and `npm test` for application changes. Use generic fixtures
 in tests. Verify the interface in the local browser when changing user flows.
 

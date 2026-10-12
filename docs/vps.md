@@ -3,7 +3,43 @@
 The stack is prepared for Docker/Compose and the existing Pangolin/Traefik
 gateway. Choose a new HTTPS hostname for the family site before deploying.
 
-## Install
+## Deploy with Dockhand
+
+Create a Git stack in your VPS environment:
+
+| Setting | Value |
+| --- | --- |
+| Stack name | `ornament` |
+| Repository | `https://github.com/mot1us/ornament.git` |
+| Branch | `main` |
+| Compose file | `compose.yaml` |
+| Context | Repository root (`.`) |
+| Build images on deploy | On |
+| Auto-sync | Off during setup |
+
+Generate an organizer password hash on your own computer from this checkout:
+
+```sh
+node scripts/password.js
+```
+
+In the stack's environment settings, enter:
+
+```dotenv
+ADMIN_PASSWORD_HASH=scrypt:PASTE_THE_GENERATED_SALT:PASTE_THE_GENERATED_HASH
+PUBLIC_URL=https://ornament.example.com
+EMAIL_MODE=preview
+```
+
+Copy only the hash value after `ADMIN_PASSWORD_HASH=`. Mark it as a secret.
+Use your actual HTTPS hostname. Deploy after saving these settings. The Compose
+file sets secure cookies and passes settings into the application explicitly.
+
+Manage configuration changes and redeployments through Dockhand so its saved
+secrets are supplied. Include Dockhand's own data in your private backups.
+See the [Dockhand manual](https://dockhand.pro/manual/#git-integration).
+
+## Install with the CLI
 
 Clone the GitHub repository on the VPS into a dedicated stack directory:
 
@@ -26,7 +62,7 @@ Set these values in the VPS `.env`:
 
 ```dotenv
 ADMIN_PASSWORD_HASH=scrypt:PASTE_THE_GENERATED_SALT:PASTE_THE_GENERATED_HASH
-PUBLIC_URL=https://santa.example.com
+PUBLIC_URL=https://ornament.example.com
 COOKIE_SECURE=true
 EMAIL_MODE=preview
 ```
@@ -56,8 +92,9 @@ has no network access. SQLite lives in `santa_data`, and backups in
 ## Bring over history
 
 Transfer the history files privately to the VPS; never commit them to GitHub.
-Use **History** in the organizer dashboard, or stop the main container and
-mount a private import directory for the CLI:
+Use **History** in the organizer dashboard for a Dockhand deployment. For a
+CLI deployment with a private `.env`, stop the main container and mount an
+import directory:
 
 ```sh
 docker compose stop secret-santa secret-santa-backup
@@ -73,9 +110,10 @@ addresses and partner exclusions.
 
 ## Email
 
-Keep `EMAIL_MODE=preview` during setup. Configure an existing SMTP provider on
-the VPS; the website and private database remain self-hosted. This does not
-install a mail server on the VPS.
+Keep `EMAIL_MODE=preview` during setup. Configure an existing SMTP provider in
+Dockhand's stack environment settings, or in the VPS `.env` for a CLI deployment.
+The website and private database remain self-hosted. This does not install a
+mail server on the VPS.
 
 ```dotenv
 EMAIL_MODE=smtp
@@ -90,7 +128,8 @@ Port 587 requires STARTTLS; port 465 uses TLS from the start. Certificate
 verification stays enabled. Do not copy an EmailJS browser public key into
 these fields; SMTP uses the connected email provider's credentials. Configure
 the provider's sender verification and domain records according to its
-instructions, then recreate the application container after changing `.env`:
+instructions. In Dockhand, mark `SMTP_PASSWORD` as a secret and deploy the stack
+again after saving changes. For a CLI deployment, recreate the application:
 
 ```sh
 docker compose up -d --force-recreate secret-santa
@@ -128,7 +167,9 @@ organizer dashboard if the restore followed a security incident.
 
 ## Updates
 
-Back up first, pull the reviewed GitHub commit, and rebuild the containers.
-Keep the existing named volumes. CI checks the application and Docker build
-for each pushed change. Deployment is deliberate; CI does not SSH into your
-VPS or send family emails.
+Back up first. In Dockhand, deploy the Git stack with image building enabled
+after the version's GitHub checks pass. For a CLI deployment, pull the reviewed
+commit and rebuild the containers. Keep the existing stack name and named
+volumes so updates retain the database and backups. CI checks the application,
+Compose configuration, and Docker build for each pushed change. Deployment is
+deliberate; CI does not SSH into your VPS or send family emails.
