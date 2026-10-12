@@ -1,6 +1,6 @@
 services:
   ornament:
-    image: ghcr.io/mot1us/ornament:0.3.0
+    image: ghcr.io/mot1us/ornament:0.4.0
     restart: unless-stopped
     environment:
       ADMIN_PASSWORD_HASH: "${ADMIN_PASSWORD_HASH:-}"
@@ -32,7 +32,7 @@ services:
       - ALL
 
   ornament-backup:
-    image: ghcr.io/mot1us/ornament:0.3.0
+    image: ghcr.io/mot1us/ornament:0.4.0
     restart: unless-stopped
     command: ["node", "scripts/backup-loop.js"]
     environment:

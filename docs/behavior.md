@@ -36,7 +36,10 @@ the recipient opened it or that it avoided spam.
 
 The organizer shares one random, unguessable **Group link** for an exchange.
 It opens a form for a name, email, wish list, message to the gifter, and product
-links. Submission requires no account or email verification. A private browser
+links. Submission requires no account or email verification. Saving shows a finished
+list with an explicit **Edit wish list** action. Cancel discards unsaved edits;
+reopening the page shows the saved list. Up to five gift ideas can be added
+individually, and the note to the gifter is optional. A private browser
 session lets someone return to their own form for 30 days. The group link never
 reveals the roster, other submissions, email addresses, or matches.
 

@@ -258,6 +258,90 @@ function authFrom(response) {
   return {cookie:response.cookie,csrf:response.data.csrf};
 }
 
+test('a complete exchange goes from shared submissions to reviewed identities, repeat-free matches, delivery, and private edits',async t=>{
+  const sent=[];
+  const transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin,dir}=await fixture(t,{emailMode:'smtp',transport});
+  config.smtp.from='Ornament <sender@example.test>';
+  for(const year of [2024,2025]) {
+    const record={...history(year,year===2024?1:2),status:year===2024?'verified':'provisional',aliases:{'Person 0':['Guest Zero']}};
+    assert.equal((await call('/admin/history',record,admin)).status,200);
+  }
+  assert.equal((await call('/admin/exchanges',{year:2026},admin)).status,200);
+  let state=(await call('/admin/state?year=2026',undefined,admin)).data;
+  assert.equal(state.people.length,0);
+  const identities=state.identities;
+  const {token}=await openGroup(call,admin);
+  const owners=[];
+  for(const [i,person] of identities.entries()) {
+    const entry=authFrom(await call('/group/redeem',{token}));
+    const fields={...submittedFields(i===0?'Guest Zero':person.name,`guest-${i}@example.test`),
+      wishlist:`Wish list ${i}: a warm scarf`,message:`Message ${i}: size medium`,
+      gifts:[{label:`Gift ${i}`,url:`https://example.test/gift-${i}`} ]};
+    owners.push({person,fields,auth:await submitGroup(call,entry,fields)});
+  }
+  const newcomer=authFrom(await call('/group/redeem',{token}));
+  const newcomerFields=submittedFields('New Guest','new-guest@example.test');
+  await submitGroup(call,newcomer,newcomerFields);
+  state=(await call('/admin/state?year=2026',undefined,admin)).data;
+  assert.equal(state.people.length,0);assert.equal(state.submissions.length,11);assert.deepEqual(sent,[]);
+  for(const submission of state.submissions) {
+    const owner=owners.find(p=>p.fields.email===submission.email);
+    assert.equal((await call('/admin/submissions/approve',{id:submission.id,personId:owner?.person.id||'new'},admin)).status,200);
+  }
+  assert.equal(db.prepare('SELECT count(*) AS n FROM people').get().n,11);
+  const people=members(db,2026),first=people[0],excluded=people.find(p=>p.id!==first.id);
+  assert.equal((await call('/admin/exclusions',{year:2026,giver:first.id,recipient:excluded.id},admin)).status,200);
+  assert.equal((await call('/admin/draft',{year:2026},admin)).status,200);
+  assert.equal((await call('/admin/finalize',{year:2026,confirm:'FINALIZE'},admin)).status,400);
+  assert.equal((await call('/admin/history/confirm',{year:2025},admin)).status,200);
+  assert.equal((await call('/admin/draft',{year:2026},admin)).status,200);
+  assert.equal((await call('/admin/finalize',{year:2026,confirm:'FINALIZE'},admin)).status,200);
+  const pairs=db.prepare('SELECT giver,recipient FROM assignments WHERE year=2026').all();
+  const previous=db.prepare('SELECT giver,recipient FROM assignments WHERE year IN (2024,2025)').all();
+  assert.equal(pairs.length,11);assert.equal(new Set(pairs.map(p=>p.recipient)).size,11);
+  for(const pair of pairs) {
+    assert.notEqual(pair.giver,pair.recipient);
+    assert.equal(previous.some(p=>p.giver===pair.giver&&p.recipient===pair.recipient),false);
+    assert.equal(pairs.some(p=>p.giver===pair.recipient&&p.recipient===pair.giver),false);
+    assert.equal(pair.giver===first.id&&pair.recipient===excluded.id,false);
+  }
+  assert.equal((await call('/admin/mail/prepare',{year:2026,kind:'assignment'},admin)).status,200);
+  assert.equal((await call('/admin/mail/send',{year:2026},admin)).status,400);
+  assert.deepEqual(sent,[]);
+  assert.equal((await call('/admin/mail/send',{year:2026,confirm:'SEND'},admin)).status,200);
+  assert.equal(sent.length,11);
+  for(const pair of pairs) {
+    const giver=people.find(p=>p.id===pair.giver),recipient=people.find(p=>p.id===pair.recipient);
+    const mail=sent.find(m=>m.to===giver.email);
+    assert.ok(mail);assert.equal(mail.from,config.smtp.from);
+    for(const text of [recipient.name,recipient.wishlist,recipient.message,...recipient.gifts.flatMap(g=>[g.label,g.url])])assert.ok(mail.text.includes(text));
+    for(const other of people.filter(p=>p.id!==recipient.id))assert.equal(mail.text.includes(other.wishlist),false);
+    const link=mail.text.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0];
+    const personal=authFrom(await call('/redeem',{token:new URL(link).hash.slice(1)}));
+    const profile=await call('/member/profile',undefined,personal);
+    assert.equal(profile.data.person.name,giver.name);assert.equal(profile.data.recipient.name,recipient.name);
+    assert.equal(profile.data.recipient.email,undefined);
+    assert.equal((await call('/admin/state',undefined,personal)).status,403);
+  }
+  assert.equal((await call('/admin/mail/prepare',{year:2026,kind:'assignment'},admin)).status,200);
+  assert.equal((await call('/admin/mail/send',{year:2026,confirm:'SEND'},admin)).status,200);
+  assert.equal(sent.length,11);
+  const owner=owners[0];
+  await submitGroup(call,owner.auth,{...owner.fields,wishlist:'Updated after the draw',message:'Please choose green'});
+  assert.equal((await call('/member/profile',undefined,owner.auth)).status,403);
+  const giverId=pairs.find(p=>p.recipient===owner.person.id).giver;
+  const link=(await call('/admin/link',{year:2026,personId:giverId},admin)).data.link;
+  const verified=authFrom(await call('/redeem',{token:new URL(link).hash.slice(1)}));
+  assert.equal((await call('/member/profile',undefined,verified)).data.recipient.wishlist,'Updated after the draw');
+  assert.deepEqual(db.prepare('SELECT giver,recipient FROM assignments WHERE year=2026').all(),pairs);
+  const reopened=openDatabase(dir);
+  try {
+    assert.deepEqual(reopened.prepare('SELECT giver,recipient FROM assignments WHERE year=2026').all(),pairs);
+    assert.equal(reopened.prepare("SELECT count(*) AS n FROM outbox WHERE status='sent'").get().n,11);
+  }finally{reopened.close();}
+});
+
 test('review can reuse a historical identity absent from the current roster',async t=>{
   const {db,call,admin}=await fixture(t);seed(db);
   const person=members(db,2026)[0];

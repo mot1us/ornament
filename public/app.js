@@ -1,6 +1,6 @@
 const app=document.querySelector('#app');
 const dialog=document.querySelector('#dialog');
-let session=null, state=null, tab='people', selectedYear=null, member=null, group=null, revealed=false;
+let session=null, state=null, tab='people', selectedYear=null, member=null, group=null, revealed=false, familyEditing=false;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const personName=id=>state.people.find(p=>p.id===id)?.name||'Unknown person';
 const badge=(label,style='')=>`<span class="badge ${style}">${esc(label)}</span>`;
@@ -45,7 +45,7 @@ function renderAdmin() {
 const isMutable=()=>['open','drafted'].includes(state.exchange.state);
 function peoplePanel() {
   const pending=(state.submissions||[]).filter(p=>p.status==='pending');
-  return `<div class="section-heading"><div><h2>People</h2><p>Share one link. Review the wish lists as they arrive.</p></div><div class="row-actions">${isMutable()?'<button class="secondary" data-action="share">Group link</button><button class="quiet small" data-action="group-revoke">Revoke group link</button><button class="primary" data-action="add-person">+ Add person</button>':''}</div></div>${state.people.length?`<div class="table-wrap"><table><thead><tr><th>Person</th><th>Email</th><th>Wish list</th><th>Taking part</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${state.people.map(p=>`<tr><td><div class="person"><span class="avatar">${esc(p.name[0])}</span><strong>${esc(p.name)}</strong></div></td><td>${p.email?esc(p.email):'<span class="muted">Email needed</span>'}</td><td>${p.wishlist||p.gifts.length?badge('Ready','green'):badge('Not yet')}</td><td>${p.active?badge('Yes','green'):badge('Sitting out')}</td><td class="row-actions">${isMutable()?`<button class="quiet" data-action="edit-person" data-id="${p.id}">Edit</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${p.id}">Update email</button>`:''}${state.exchange.state!=='archived'?`<button class="quiet" data-action="link" data-id="${p.id}">Private link</button><button class="quiet small" data-action="revoke" data-id="${p.id}">Revoke links</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Share the group link to collect wish lists.</div>'}${pending.length?`<section class="submission-review"><div class="section-heading"><h2>To review ${badge(pending.length,'amber')}</h2></div><ul class="submission-list">${pending.map(p=>`<li><div><strong>${esc(p.name)}</strong><small class="block muted">${esc(p.email)}</small></div><button class="secondary" data-action="review-submission" data-id="${esc(p.id)}" ${isMutable()?'':'disabled'}>Review</button></li>`).join('')}</ul></section>`:''}`;
+  return `<div class="section-heading"><div><h2>People</h2><p>Share one link. Review the wish lists as they arrive.</p></div><div class="row-actions">${isMutable()?'<button class="secondary" data-action="share">Group link</button><button class="quiet small" data-action="group-revoke">Revoke group link</button><button class="primary" data-action="add-person">+ Add person</button>':''}</div></div>${state.people.length?`<div class="table-wrap"><table><thead><tr><th>Person</th><th>Email</th><th>Wish list</th><th>Taking part</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${state.people.map(p=>`<tr><td><div class="person"><span class="avatar">${esc(p.name[0])}</span><strong>${esc(p.name)}</strong></div></td><td>${p.email?esc(p.email):'<span class="muted">Email needed</span>'}</td><td>${p.wishlist||p.gifts.length?badge('Ready','green'):badge('Not yet')}</td><td>${p.active?badge('Yes','green'):badge('Sitting out')}</td><td class="row-actions">${isMutable()?`<button class="quiet" data-action="edit-person" data-id="${p.id}">Edit</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${p.id}">Update email</button>`:''}${state.exchange.state!=='archived'?`<button class="quiet" data-action="link" data-id="${p.id}">Private link</button><button class="quiet small" data-action="revoke" data-id="${p.id}">Revoke links</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">${pending.length?'Approve the submitted wish lists below to add people to this year’s draw.':'Share the group link to collect wish lists.'}</div>`}${pending.length?`<section class="submission-review"><div class="section-heading"><h2>To review ${badge(pending.length,'amber')}</h2></div><ul class="submission-list">${pending.map(p=>`<li><div><strong>${esc(p.name)}</strong><small class="block muted">${esc(p.email)}</small></div><button class="secondary" data-action="review-submission" data-id="${esc(p.id)}" ${isMutable()?'':'disabled'}>Review</button></li>`).join('')}</ul></section>`:''}`;
 }
 function personForm(person={}) {
   return `<h2>${person.id?'Edit '+esc(person.name):'Add person'}</h2><form data-form="person"><input type="hidden" name="id" value="${esc(person.id||'')}"><label>Name<input name="name" required maxlength="80" value="${esc(person.name||'')}"></label><label>Email<input type="email" name="email" value="${esc(person.email||'')}" placeholder="You can add this later"></label><label>Other names, separated by commas<input name="aliases" value="${esc((person.aliases||[]).join(', '))}" placeholder="A nickname or previous name"></label><label class="checkbox"><input type="checkbox" name="active" ${person.active===0?'':'checked'}>Taking part this year</label><button class="primary">Save person</button></form>`;
@@ -73,32 +73,87 @@ function emailPanel() {
 }
 function newYearForm() {return `<form data-form="new-year"><label>Year<input name="year" type="number" min="2000" max="2200" value="${state?.year?state.year+1:new Date().getFullYear()}" required></label>${state?.exchanges.length?`<label>Copy participants from<select name="copyFrom"><option value="">Start empty</option>${state.exchanges.map(e=>`<option value="${e.year}" ${e.year===state.year?'selected':''}>${e.year}</option>`).join('')}</select></label><p class="muted">Wish lists and exclusions start fresh each year.</p>`:''}<button class="primary">Create exchange</button></form>`;}
 
+function giftRow(gift={},index=0) {
+  return `<div class="gift-entry" data-gift-row><div class="gift-entry-fields"><label>Gift idea<input name="gift-label-${index}" maxlength="160" value="${esc(gift.label||'')}" placeholder="e.g. Wool scarf"></label><label>Product link <span class="optional">optional</span><input name="gift-url-${index}" type="url" maxlength="2000" value="${esc(gift.url||'')}" placeholder="https://…"></label></div><button type="button" class="remove-gift" data-action="remove-gift" aria-label="Remove gift idea">×</button></div>`;
+}
 function giftFields(gifts=[]) {
-  return `<details class="gift-details"><summary>Gift links (optional)${gifts.length?' · '+gifts.length:''}</summary><div class="gift-fields">${Array.from({length:5},(_,i)=>`<div class="form-row"><label>Gift ${i+1}<input name="gift-label-${i}" maxlength="160" value="${esc(gifts[i]?.label||'')}" placeholder="Gift idea"></label><label>Link<input name="gift-url-${i}" type="url" maxlength="2000" value="${esc(gifts[i]?.url||'')}" placeholder="https://…"></label></div>`).join('')}</div></details>`;
+  return `<div class="gift-editor" data-next-gift="${gifts.length}"><div class="gift-fields">${gifts.map((gift,i)=>giftRow(gift,i)).join('')}</div><button type="button" class="add-gift" data-action="add-gift" ${gifts.length>=5?'disabled':''}><span aria-hidden="true">+</span> Add a gift or product link</button><span class="gift-limit" ${gifts.length>=5?'':'hidden'}>Up to 5 gift ideas.</span></div>`;
 }
 function giftLinks(gifts=[]) {
-  return gifts.length?`<ul class="gift-ideas">${gifts.map(g=>`<li>${g.url?`<a href="${esc(g.url)}" target="_blank" rel="noopener noreferrer">${esc(g.label||'Gift idea')} ↗</a>`:esc(g.label)}</li>`).join('')}</ul>`:'';
+  return gifts.length?`<ul class="gift-ideas">${gifts.map(g=>`<li>${g.url?`<a href="${esc(g.url)}" target="_blank" rel="noopener noreferrer"><span>${esc(g.label||'Gift idea')}</span><span aria-hidden="true">↗</span></a>`:esc(g.label)}</li>`).join('')}</ul>`:'';
 }
+function familyHeading(e,title,description,saved=false) {
+  return `<header class="family-heading"><p class="eyebrow">${esc(e.title)}</p>${saved?'<span class="saved-seal" aria-hidden="true">✓</span>':''}<h1 tabindex="-1">${title}</h1><p class="family-intro">${description}</p><img class="family-toys" src="/holiday-clay.png" alt="Santa, a little reindeer, and a silver tinsel tree" width="360" height="240">${e.budget||e.eventDate?`<div class="exchange-details">${e.budget?`<span><small>Gift budget</small>${esc(e.budget)}</span>`:''}${e.eventDate?`<span><small>Celebrating on</small>${esc(e.eventDate)}</span>`:''}</div>`:''}</header>`;
+}
+function wishListForm(p,type,{identity=false,approved=false}={}) {
+  const saved=type==='group-wishlist'?!!p:!!(p?.wishlist||p?.gifts?.length);
+  return `<form data-form="${type}" class="family-card wishlist-form">${identity?`<fieldset class="form-section"><legend>Your details</legend><div class="form-row"><label>Name<input name="name" autocomplete="name" required maxlength="80" value="${esc(p?.name||'')}" ${approved?'readonly':''}></label><label>Email<input name="email" type="email" autocomplete="email" inputmode="email" required maxlength="254" value="${esc(p?.email||'')}" ${approved?'readonly':''}></label></div><p class="field-hint">This is where your match will arrive.</p></fieldset>`:''}<fieldset class="form-section"><legend>What would you love?</legend><label class="sr-only" for="wishlist">Wish list</label><textarea id="wishlist" name="wishlist" rows="4" maxlength="5000" placeholder="A few gift ideas, your size, favorite colors…">${esc(p?.wishlist||'')}</textarea>${giftFields(p?.gifts)}</fieldset><details class="message-details" ${p?.message?'open':''}><summary>A note for your Secret Santa <span class="optional">optional</span></summary><label class="sr-only" for="gifter-message">Message to your gifter</label><textarea id="gifter-message" class="gifter-message" name="message" rows="3" maxlength="2000" placeholder="Anything else they should know?">${esc(p?.message||'')}</textarea></details><p class="form-error" data-form-error role="alert" tabindex="-1" hidden></p><div class="family-actions"><button type="submit" class="primary">${saved?'Save changes':'Save wish list'} <span aria-hidden="true">→</span></button>${saved?'<button type="button" class="quiet" data-action="cancel-wishlist">Cancel</button>':''}</div><p class="family-footnote">${type==='group-wishlist'?'Your organizer reviews your list before the draw.':'Your gifter sees your latest saved list.'}</p></form>`;
+}
+function wishListSummary(p,{editable=true,identity=true}={}) {
+  return `<section class="family-card saved-wishlist" aria-label="Your saved wish list"><div class="saved-card-heading"><div><p class="eyebrow">Your wish list</p>${identity?`<h2>${esc(p.name)}</h2>${p.email?`<p class="saved-email">${esc(p.email)}</p>`:''}`:''}</div>${editable?'<button class="secondary" data-action="edit-wishlist">Edit wish list</button>':''}</div>${p.wishlist?`<div class="saved-section"><h3>Gift ideas</h3><p class="wishlist-text">${esc(p.wishlist)}</p></div>`:''}${p.gifts?.length?`<div class="saved-section"><h3>Gifts &amp; links</h3>${giftLinks(p.gifts)}</div>`:''}${p.message?`<div class="saved-section saved-message"><h3>A note for your Secret Santa</h3><p class="wishlist-text">${esc(p.message)}</p></div>`:''}<p class="family-footnote">You can close this page.${editable?' Come back on this device to edit.':''}</p></section>`;
+}
+function focusFamilyHeading() {app.querySelector('.family-heading h1')?.focus({preventScroll:true});window.scrollTo({top:0,behavior:'instant'});}
 function renderGroup() {
   const {exchange:e,submission:p}=group;
   const approved=['approved','accepted'].includes(p?.status);
   const declined=p?.status==='rejected';
   const closed=declined||e.state==='archived'||(!approved&&!['open','drafted'].includes(e.state));
-  app.innerHTML=`<section class="member-page group-page"><header class="member-heading"><div class="member-title"><p class="eyebrow">${esc(e.title)}</p><h1>Your Christmas<br>wish list.</h1><div class="member-details">${e.budget?badge('Budget: '+e.budget):''}${e.eventDate?badge(e.eventDate):''}</div></div><img class="member-toys" src="/holiday-clay.png" alt="" width="160" height="120"></header>${declined?'<p class="callout">This wish list was declined. Ask the organizer to review your details.</p>':closed?'<p class="callout">Submissions are closed. Contact the organizer if you need a change.</p>':p?'<p class="saved-status" role="status">Saved. Your match will arrive by email.</p>':'<p class="form-intro">A few gift ideas, then you’re all set.</p>'}<form data-form="group-wishlist" class="wishlist-form"><fieldset ${closed?'disabled':''}><div class="form-row"><label>Name<input name="name" autocomplete="name" required maxlength="80" value="${esc(p?.name||'')}" ${approved?'readonly':''}></label><label>Email<input name="email" type="email" autocomplete="email" inputmode="email" required maxlength="254" value="${esc(p?.email||'')}" ${approved?'readonly':''}></label></div><label><span class="wishlist-label">What would you like?</span><textarea name="wishlist" rows="5" maxlength="5000" placeholder="Gift ideas, sizes, favorite things…">${esc(p?.wishlist||'')}</textarea></label><label>Message to your gifter (optional)<textarea class="gifter-message" name="message" rows="3" maxlength="2000" placeholder="Anything else they should know?">${esc(p?.message||'')}</textarea></label>${giftFields(p?.gifts)}<button class="primary">${p?'Save changes':'Save wish list'}</button>${declined?'':'<p class="section-note">We’ll email your match after the draw. You can return here on this device to edit.</p>'}</fieldset></form></section>`;
+  const editing=(!p||familyEditing)&&!closed;
+  const title=declined?'Check with your organizer.':closed?'Wish lists are closed.':editing?'Your Christmas<br>wish list.':'Wish list saved.';
+  const description=declined?'Your list wasn’t approved. Ask your organizer about the details.':closed?'Contact your organizer if you need to make a change.':editing?'Gift ideas, useful links, and a note for your Secret Santa.':approved?'You’re all set. Your match will arrive by email after the draw.':'Your organizer will review your list. Your match will arrive by email after the draw.';
+  app.innerHTML=`<section class="family-page">${familyHeading(e,title,description,!!p&&!editing&&!closed)}<div class="family-content">${editing?wishListForm(p,'group-wishlist',{identity:true,approved}):p?wishListSummary(p,{editable:!closed}):'<div class="family-card"><p>No wish list has been submitted.</p></div>'}</div></section>`;
 }
 function submissionReview(p) {
   return `<h2>Review ${esc(p.name)}</h2><p class="review-email">${esc(p.email)}</p><div class="submission-details">${p.wishlist?`<p class="wishlist-text">${esc(p.wishlist)}</p>`:''}${p.message?`<h3>Message to their gifter</h3><p class="wishlist-text">${esc(p.message)}</p>`:''}${giftLinks(p.gifts)}</div><form data-form="approve-submission"><input type="hidden" name="id" value="${esc(p.id)}"><label>Participant<select name="personId">${(state.identities||state.people).map(person=>`<option value="${esc(person.id)}" ${person.id===p.suggestedPersonId?'selected':''}>${esc(person.name)}</option>`).join('')}<option value="new" ${p.suggestedPersonId?'':'selected'}>Add as a new person</option></select></label><p class="section-note">Check the name and email. Choose their existing entry to preserve match history.</p><div class="review-actions"><button class="primary">Approve wish list</button><button type="button" class="quiet" data-action="reject-submission" data-id="${esc(p.id)}">Decline</button></div></form>`;
 }
+function recipientCard(r) {
+  return r?`<section class="recipient-card" aria-label="Your Secret Santa match">${revealed?`<p class="eyebrow">You’re giving to</p><div class="recipient-heading"><h2 tabindex="-1">${esc(r.name)}</h2><button class="quiet" data-action="hide-match">Hide match</button></div>${r.wishlist?`<p class="wishlist-text">${esc(r.wishlist)}</p>`:'<p>No wish list yet.</p>'}${giftLinks(r.gifts)}${r.message?`<div class="saved-message"><h3>A note from ${esc(r.name)}</h3><p class="wishlist-text">${esc(r.message)}</p></div>`:''}`:'<p class="eyebrow">The names have been drawn</p><h2>Your Secret Santa is ready.</h2><button class="primary" data-action="reveal">View my match <span aria-hidden="true">→</span></button>'}</section>`:'';
+}
+function renderRecipient() {
+  app.querySelector('.recipient-card').outerHTML=recipientCard(member.recipient);
+  app.querySelector(revealed?'.recipient-heading h2':'[data-action="reveal"]')?.focus({preventScroll:true});
+}
 function renderMember() {
   const {exchange:e,person:p,recipient:r}=member;
-  app.innerHTML=`<section class="member-page"><header class="member-heading"><div class="member-title"><p class="eyebrow">${esc(p.name)} · ${esc(e.title)}</p><h1>Your wish list</h1><div class="member-details">${e.budget?badge('Budget: '+e.budget):''}${e.eventDate?badge(e.eventDate):''}${!p.active?badge('Sitting out','amber'):''}</div></div><img class="member-toys" src="/holiday-clay.png" alt="" width="160" height="120"></header><form data-form="wishlist" class="wishlist-form"><label><span class="wishlist-label">What would you like?</span><textarea name="wishlist" rows="6" maxlength="5000" placeholder="A few gift ideas, sizes, or things you love…">${esc(p.wishlist)}</textarea></label><label>Message to your gifter (optional)<textarea class="gifter-message" name="message" rows="3" maxlength="2000" placeholder="Anything else they should know?">${esc(p.message||'')}</textarea></label>${giftFields(p.gifts)}<button class="primary">Save wish list</button></form>${r?`<section class="recipient-card">${revealed?`<h2>Your match: ${esc(r.name)}</h2><p class="wishlist-text">${esc(r.wishlist||'No wish list yet.')}</p>${r.message?`<h3>Message from ${esc(r.name)}</h3><p class="wishlist-text">${esc(r.message)}</p>`:''}${giftLinks(r.gifts)}`:'<button class="secondary" data-action="reveal">View my match</button>'}</section>`:'<p class="section-note">Your match will appear after the draw.</p>'}</section>`;
+  const editable=e.state!=='archived'&&p.active;
+  const editing=editable&&(familyEditing||(!p.wishlist&&!p.gifts.length));
+
+  app.innerHTML=`<section class="family-page">${familyHeading(e,editing?'Your Christmas<br>wish list.':'Wish list saved.',!p.active?'You’re sitting out this year.':editing?'Gift ideas, useful links, and a note for your Secret Santa.':r?'Your match is ready. Your own wish list is below.':'Your wish list is saved. Your match will arrive after the draw.',!editing&&!!(p.wishlist||p.gifts.length))}<div class="family-content">${recipientCard(r)}${editing?wishListForm(p,'wishlist'):wishListSummary(p,{editable})}</div></section>`;
 }
+function renderFamily() {if(session?.role==='member')renderMember();else renderGroup();}
+function formGifts(form) {
+  return [...form.querySelectorAll('[data-gift-row]')].map(row=>({label:row.querySelector('input[name^="gift-label-"]').value.trim(),url:row.querySelector('input[name^="gift-url-"]').value.trim()})).filter(g=>g.label||g.url);
+}
+app.addEventListener('input',event=>{
+  if(!event.target.closest('.wishlist-form'))return;
+  event.target.removeAttribute('aria-invalid');
+  event.target.closest('form').querySelector('[data-form-error]').hidden=true;
+});
 app.addEventListener('change',async event=>{if(event.target.id==='year-select'){selectedYear=Number(event.target.value);try{await loadAdmin();}catch(error){notice(error.message,true);}}});
 let working=false;
 document.addEventListener('click',async event=>{
   const button=event.target.closest('[data-action]');if(!button||working)return;
   const action=button.dataset.action,id=button.dataset.id;
   try {
+    if(action==='edit-wishlist'||action==='cancel-wishlist'){
+      familyEditing=action==='edit-wishlist';renderFamily();focusFamilyHeading();return;
+    }
+    if(action==='add-gift'){
+      const editor=button.closest('.gift-editor');
+      if(editor.querySelectorAll('[data-gift-row]').length>=5)return;
+      const index=Number(editor.dataset.nextGift);editor.dataset.nextGift=index+1;
+      editor.querySelector('.gift-fields').insertAdjacentHTML('beforeend',giftRow({},index));
+      button.disabled=editor.querySelectorAll('[data-gift-row]').length>=5;
+      editor.querySelector('.gift-limit').hidden=!button.disabled;
+      editor.querySelector('[data-gift-row]:last-child input').focus();return;
+    }
+    if(action==='remove-gift'){
+      const editor=button.closest('.gift-editor');button.closest('[data-gift-row]').remove();
+      editor.querySelector('[data-action="add-gift"]').disabled=false;
+      editor.querySelector('.gift-limit').hidden=true;
+      editor.querySelector('[data-action="add-gift"]').focus();return;
+    }
+    if(action==='hide-match'){revealed=false;renderRecipient();return;}
     if(action==='copy-link'){
       const input=document.querySelector('#shared-link');
       try {await navigator.clipboard.writeText(input.value);notice('Link copied.');}
@@ -115,7 +170,7 @@ document.addEventListener('click',async event=>{
     if(action==='no-exchange'){showDialog(`<h2>No exchange in a previous year?</h2><p>Use this only when your group did not hold a draw that year. Existing matches cannot be erased with this option.</p><form data-form="no-exchange"><label>Year<input name="year" type="number" min="2000" max="2200" value="${state.year-1}" required></label><label>Type NO EXCHANGE<input name="confirm" required autocomplete="off"></label><button class="primary">Record empty year</button></form>`);return;}
     if(action==='finalize'){showDialog('<h2>Finalize draw</h2><p>The roster and matches will be locked, and recipients will appear on family pages. Emails are a separate step.</p><form data-form="finalize"><label>Type FINALIZE<input name="confirm" required autocomplete="off"></label><button class="primary">Finalize draw</button></form>');return;}
     if(action==='preview-email'){const mail=state.outbox.find(m=>m.id===id);showDialog(`<h2>${esc(mail.subject)}</h2><p>To: ${esc(mail.recipient_email)}</p><pre class="email-preview">${esc(mail.body)}</pre>`);return;}
-    if(action==='reveal'){revealed=true;renderMember();return;}
+    if(action==='reveal'){revealed=true;renderRecipient();return;}
     if(action==='view-history'){selectedYear=Number(button.dataset.year);await loadAdmin();return;}
     if(action==='send'&&state.emailMode==='smtp'){showDialog('<h2>Send these emails to the family?</h2><p>Only pending messages will be sent. Review the recipients and message previews first.</p><form data-form="send"><label>Type SEND<input name="confirm" required autocomplete="off"></label><button class="primary">Send pending emails</button></form>');return;}
     if(action==='retry-email'){const mail=state.outbox.find(m=>m.id===id);showDialog(`<h2>Queue this message again?</h2><p>To: ${esc(mail.recipient_email)}</p><p>${mail.status==='uncertain'?'Check with the recipient first: the previous attempt may have delivered. Type CHECKED once you have verified they did not receive it.':'This will return the message to pending. Sending happens separately.'}</p><form data-form="retry"><input type="hidden" name="id" value="${id}">${mail.status==='uncertain'?'<label>Type CHECKED<input name="confirm" required></label>':''}<button class="primary">Queue for sending</button></form>`);return;}
@@ -130,7 +185,7 @@ document.addEventListener('click',async event=>{
     if(action==='prepare-invites'||action==='prepare-matches')await api('/admin/mail/prepare',{year:state.year,kind:action==='prepare-invites'?'invite':'assignment'});
     if(action==='send')await api('/admin/mail/send',{year:state.year});
     await loadAdmin();notice('Saved.');
-  }catch(error){notice(error.message,true);}finally{working=false;button.disabled=false;}
+  }catch(error){notice(error.message,true);}finally{working=false;button.disabled=action==='add-gift'&&button.closest('.gift-editor')?.querySelectorAll('[data-gift-row]').length>=5;}
 });
 
 document.addEventListener('submit',async event=>{
@@ -138,6 +193,8 @@ document.addEventListener('submit',async event=>{
   const values=Object.fromEntries(new FormData(form));const type=form.dataset.form;
   const button=form.querySelector('button[type="submit"], button:not([type])');
   working=true;if(button)button.disabled=true;
+  const familyForm=['group-wishlist','wishlist'].includes(type),buttonText=button?.innerHTML;
+  if(familyForm&&button)button.textContent='Saving…';
   try {
     if(type==='email-sign-in'){
       const result=await api('/sign-in',{email:values.email});
@@ -165,18 +222,25 @@ document.addEventListener('submit',async event=>{
     if(type==='group-revoke')await api('/admin/group-revoke',{year:state.year});
     if(type==='approve-submission')await api('/admin/submissions/approve',{id:values.id,personId:values.personId});
     if(type==='group-wishlist'){
-      const gifts=Array.from({length:5},(_,i)=>({label:values[`gift-label-${i}`],url:values[`gift-url-${i}`]})).filter(g=>g.label||g.url);
+      const gifts=formGifts(form);
       if(!values.wishlist.trim()&&!gifts.length)throw new Error('Add a wish list or a gift idea.');
       session=await api('/group/profile',{name:values.name,email:values.email,wishlist:values.wishlist,message:values.message,gifts});
       document.querySelector('#logout').hidden=false;
-      group=await api('/group/profile');renderGroup();notice('Saved. Your match will arrive by email.');return;
+      group=await api('/group/profile');familyEditing=false;renderGroup();focusFamilyHeading();return;
     }
     if(type==='wishlist'){
-      const gifts=Array.from({length:5},(_,i)=>({label:values[`gift-label-${i}`],url:values[`gift-url-${i}`]})).filter(g=>g.label||g.url);
-      await api('/member/profile',{wishlist:values.wishlist,message:values.message,gifts});member=await api('/member/profile');renderMember();notice('Saved.');return;
+      const gifts=formGifts(form);
+      if(!values.wishlist.trim()&&!gifts.length)throw new Error('Add a wish list or a gift idea.');
+      await api('/member/profile',{wishlist:values.wishlist,message:values.message,gifts});member=await api('/member/profile');familyEditing=false;renderMember();focusFamilyHeading();return;
     }
     dialog.close();await loadAdmin();notice('Saved.');
-  }catch(error){notice(error.message,true);}finally{working=false;if(button)button.disabled=false;}
+  }catch(error){
+    if(familyForm){
+      const message=form.querySelector('[data-form-error]');message.textContent=error.message;message.hidden=false;message.focus();
+      if(!values.wishlist.trim()&&!formGifts(form).length)form.elements.wishlist.setAttribute('aria-invalid','true');
+    }else notice(error.message,true);
+  }finally{working=false;if(button){button.disabled=false;if(familyForm)button.innerHTML=buttonText;}}
+
 });
 
 async function boot() {

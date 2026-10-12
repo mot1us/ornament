@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- Redesign family wish lists as vintage Christmas cards, with a finished saved view and explicit edit/cancel actions.
+- Add gift ideas one at a time, simplify the optional note, and improve mobile layouts and inline errors.
+- Clarify pending organizer review and verify a complete exchange through result delivery and private edits.
+
 ## 0.3.0
 
 - Collect names, emails, wish lists, messages, and product links through one private group link, without a sign-in email.
