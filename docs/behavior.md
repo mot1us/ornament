@@ -16,6 +16,24 @@ It checks self-matches, exclusions, directed history, and optionally reciprocal
 edges. It does not claim to sample all possible valid draws uniformly. A
 bounded search prevents a complex exchange from exhausting the server.
 
+**Draw → Test matchmaking** checks up to 100 temporary draws using the selected
+exchange's active participants, exclusions, two preceding calendar years, and
+reciprocal setting. The response contains counts and rule results only, never
+pairings, identities, wish lists, or email content. It does not save a draft,
+change a finalized draw, write database records, or prepare/send email.
+Incomplete or provisional history is flagged because only recorded matches can
+be checked. A passing test checks matching rules, not finalization readiness,
+uniform randomness, or email delivery. Repeated valid draws may be identical
+when restrictions leave few possibilities.
+
+The organizer-only endpoint requires the normal origin and CSRF protections.
+A test stops after 100 draws, about one second, or a 50,000-node per-draw search
+limit. The time check occurs between search steps, so normal request overhead
+can add a small amount of time. A limit result is inconclusive, not proof that
+no draw exists. Five test requests per organizer session are allowed in fifteen
+minutes. Normal draft generation retains its existing 500,000-node search limit.
+The displayed result is cleared when organizer data is reloaded or changed.
+
 Draft generation, history imports, and finalization use SQLite transactions.
 Changing a roster, matching rule, or relevant history discards affected drafts.
 Finalization revalidates the entire draw against the current roster and rules.

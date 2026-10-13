@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { openDatabase, audit, getExchange, members, transaction, importHistory } from './database.js';
 import { createExchange, savePerson, emailValid, matchingOptions, historyReadiness, mutable, invalidateDraft, draftDraw,
-  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest } from './service.js';
+  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest } from './service.js';
 import { secret, hash, passwordMatches, readConfig } from './security.js';
 import { createMailer } from './mail.js';
 import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
@@ -257,6 +257,15 @@ export function createApp(config,db,providedTransport) {
     });res.json({ok:true});
   });
   app.post('/api/admin/draft',(req,res)=>{const year=Number(req.body.year);draftDraw(db,year);res.json({ok:true,draw:drawStatus(year)});});
+  app.post('/api/admin/matching-test',(req,res)=>{
+    const now=Date.now(),key=`matching-test:${req.session.hash}`;
+    for(const [id,entry] of attempts)if(entry.until<now)attempts.delete(id);
+    const entry=attempts.get(key)||{count:0,until:now+15*60000};
+    if(!attempts.has(key)&&attempts.size>=1000)return res.status(429).json({error:'Please try again later.'});
+    attempts.set(key,entry);
+    if(++entry.count>5)return res.status(429).json({error:'Wait fifteen minutes before running another matching test.'});
+    res.json(matchingTest(db,Number(req.body.year)));
+  });
   app.post('/api/admin/finalize',(req,res)=>{
     if (req.body.confirm !== 'FINALIZE') throw new Error('Type FINALIZE to confirm.');
     lockDraw(db,Number(req.body.year));res.json({ok:true});

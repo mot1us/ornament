@@ -322,6 +322,17 @@ dialog[open]::backdrop { animation: page-arrive 180ms both; }
 .validation-checks{list-style:none;padding:0;margin:1.5rem 0}.validation-checks li{display:flex;align-items:center;gap:.6rem;padding:.65rem 0;border-bottom:1px solid var(--line,#ddd)}.validation-checks .badge{margin-left:auto}
 .registration-options{margin-top:2rem;padding:1rem;border:1px solid var(--line,#ddd);border-radius:12px}.registration-options summary{cursor:pointer}.registration-options button{margin:.4rem .4rem .4rem 0}
 .private-draw{text-align:center}.private-draw p{max-width:42rem;margin:1rem auto}
+.matching-test { margin-bottom: 28px; }
+.matching-test .section-heading { align-items: flex-start; }
+.matching-test .section-heading p { max-width: 540px; margin-bottom: 0; font-size: .85rem; }
+.matching-test .section-heading button { flex-shrink: 0; }
+.matching-test h3 { margin-top: 0; }
+.matching-test h4 { margin: 24px 0 8px; color: var(--green); font-size: 1.1rem; }
+.matching-test .test-attention h4 { color: var(--red); }
+.matching-test-rules { list-style: none; padding: 0; line-height: 1.8; }
+.matching-test-rules li { padding: 4px 0; }
+.matching-test-rules span { color: var(--green); margin-right: 6px; }
+#matching-test-result:empty { display: none; }
 @media(max-width:600px){.validation-checks li{flex-wrap:wrap}.validation-checks .badge{margin-left:0}.privacy-note{align-items:flex-start}}
 
 /* Keep the identity, status and actions together on small screens. Explicit table

@@ -3,6 +3,7 @@ import { audit, ensureYear, getExchange, members, findPerson, transaction } from
 import { generateDraw, validateDraw } from './matching.js';
 import { hash, secret } from './security.js';
 import { validateWishlist } from './validation.js';
+import { testMatchmaking } from './matching-test.js';
 
 export const emailValid = email => typeof email === 'string' && email.length <= 254 && /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(email);
 export const normalizeEmail = email => typeof email === 'string' ? email.trim().toLowerCase() : '';
@@ -112,6 +113,12 @@ export function draftDraw(db, year) {
     audit(db,'draft-draw',{year,count:pairs.length});
     return pairs;
   });
+}
+
+export function matchingTest(db,year) {
+  getExchange(db,year);
+  const people=members(db,year).filter(p=>p.active).map(p=>p.id);
+  return {...testMatchmaking(people,matchingOptions(db,year)),year,history:historyReadiness(db,year)};
 }
 
 export function lockDraw(db,year) {

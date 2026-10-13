@@ -32,9 +32,9 @@ export function validateDraw(pairs, people, options) {
   return [...new Set(errors)];
 }
 
-export function generateDraw(people, options) {
+export function generateDraw(people, options, {maxVisits=500000,deadline=Infinity}={}) {
   if (people.length < 3 || people.length > 50 || new Set(people).size !== people.length) {
-    throw new Error('Use between 3 and 50 distinct participants.');
+    throw Object.assign(new Error('Use between 3 and 50 distinct participants.'),{code:'INVALID_ROSTER'});
   }
   const forbidden = forbiddenPairs(options);
   const edges = new Map();
@@ -44,7 +44,7 @@ export function generateDraw(people, options) {
     !forbidden.has(JSON.stringify([giver, recipient])) &&
     (options.noReciprocal === false || edges.get(recipient) !== giver)));
   const search = () => {
-    if (++visits > 500000) throw new Error('The search limit was reached. Reduce the exchange size or review its restrictions.');
+    if (++visits > maxVisits || performance.now()>=deadline) throw Object.assign(new Error('The search limit was reached. Reduce the exchange size or review its restrictions.'),{code:'SEARCH_LIMIT'});
     if (edges.size === people.length) return true;
     const remaining = shuffled(people.filter(id => !edges.has(id)))
       .map(id => ({ id, choices: candidates(id) })).sort((a, b) => a.choices.length - b.choices.length);
@@ -59,6 +59,6 @@ export function generateDraw(people, options) {
     }
     return false;
   };
-  if (!search()) throw new Error('No valid draw exists with these participants and restrictions. Review the rules; none were relaxed.');
+  if (!search()) throw Object.assign(new Error('No valid draw exists with these participants and restrictions. Review the rules; none were relaxed.'),{code:'NO_VALID_DRAW'});
   return [...edges].map(([giver, recipient]) => ({ giver, recipient }));
 }

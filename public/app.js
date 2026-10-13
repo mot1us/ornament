@@ -1,7 +1,9 @@
 import { privatePeoplePanel, personChecks, privateSubmissionReview, revealConfirmation, responsiveTable } from './organizer.js';
+import { matchingTestPanel } from './matching-test.js';
 const app=document.querySelector('#app');
 const dialog=document.querySelector('#dialog');
 let session=null, state=null, tab='people', selectedYear=null, member=null, group=null, revealed=false, familyEditing=false, familyUpdated=false;
+let matchingReport=null;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const personName=id=>state.people.find(p=>p.id===id)?.name||'Unknown person';
 const badge=(label,style='')=>`<span class="badge ${style}">${esc(label)}</span>`;
@@ -71,6 +73,7 @@ function login(message='') {
 }
 async function loadAdmin() {
   state=await api(`/admin/state${selectedYear?`?year=${selectedYear}`:''}`);
+  matchingReport=null;
   selectedYear=state.exchange?.year||null;
   renderAdmin();
 }
@@ -94,7 +97,7 @@ function rulesPanel() {
 function drawPanel() {
   const e=state.exchange;
   const historyReady=state.history.every(h=>h.status==='verified');
-  return `<div class="section-heading"><div><h2>Draw</h2><p>Check the draw without revealing the matches.</p></div>${isMutable()?'<button class="primary" data-action="draft">'+(e.state==='drafted'?'Generate another draft':'Generate a draft')+'</button>':''}</div><div class="history-check">${state.history.map(h=>`<span>${h.year} history ${badge(h.status,h.status==='verified'?'green':'amber')}</span>`).join('')}</div>${!historyReady&&isMutable()?'<p class="callout">You can try a draft now. Confirm both previous years before finalizing to make the no-repeat rule reliable.</p>':''}${state.assignments.length?`<div class="match-list">${state.assignments.map(p=>`<div><span>${esc(personName(p.giver))}</span><span class="match-arrow" aria-hidden="true">→</span><strong>${esc(personName(p.recipient))}</strong></div>`).join('')}</div>`:state.draw?.count?`<div class="private-draw panel"><h3>${state.draw.count} matches prepared</h3>${badge(state.draw.passed?'Matching checks passed':'Needs attention',state.draw.passed?'green':'amber')}<p>Matches are hidden. Self-matches, exclusions, repeats, and reciprocal rules are checked automatically.</p><button class="secondary" data-action="confirm-draw-reveal">Reveal matches</button></div>`:'<div class="empty"><h3>No draw yet.</h3><p>Add people and exclusions, then draw.</p></div>'}${e.state==='drafted'?`<div class="finalize-bar"><div><strong>Ready to finalize?</strong><p>Finalizing locks this year's roster and draw. Emails are sent separately.</p></div><button class="primary" data-action="finalize" ${historyReady&&state.draw?.passed&&state.people.filter(p=>p.active).every(p=>p.validation.passed&&!p.changesRequested)&&!(state.submissions||[]).some(s=>s.status==='pending')?'':'disabled'}>Finalize draw</button></div>`:''}${e.state==='locked'?'<p class="callout green-callout">This draw is saved and locked. Go to Email to review delivery status and send. Message previews are optional.</p>':''}`;
+  return `<div class="section-heading"><div><h2>Draw</h2><p>Check the draw without revealing the matches.</p></div>${isMutable()?'<button class="primary" data-action="draft">'+(e.state==='drafted'?'Generate another draft':'Generate a draft')+'</button>':''}</div>${matchingTestPanel(matchingReport)}<div class="history-check">${state.history.map(h=>`<span>${h.year} history ${badge(h.status,h.status==='verified'?'green':'amber')}</span>`).join('')}</div>${!historyReady&&isMutable()?'<p class="callout">You can try a draft now. Confirm both previous years before finalizing to make the no-repeat rule reliable.</p>':''}${state.assignments.length?`<div class="match-list">${state.assignments.map(p=>`<div><span>${esc(personName(p.giver))}</span><span class="match-arrow" aria-hidden="true">→</span><strong>${esc(personName(p.recipient))}</strong></div>`).join('')}</div>`:state.draw?.count?`<div class="private-draw panel"><h3>${state.draw.count} matches prepared</h3>${badge(state.draw.passed?'Matching checks passed':'Needs attention',state.draw.passed?'green':'amber')}<p>Matches are hidden. Self-matches, exclusions, repeats, and reciprocal rules are checked automatically.</p><button class="secondary" data-action="confirm-draw-reveal">Reveal matches</button></div>`:'<div class="empty"><h3>No draw yet.</h3><p>Add people and exclusions, then draw.</p></div>'}${e.state==='drafted'?`<div class="finalize-bar"><div><strong>Ready to finalize?</strong><p>Finalizing locks this year's roster and draw. Emails are sent separately.</p></div><button class="primary" data-action="finalize" ${historyReady&&state.draw?.passed&&state.people.filter(p=>p.active).every(p=>p.validation.passed&&!p.changesRequested)&&!(state.submissions||[]).some(s=>s.status==='pending')?'':'disabled'}>Finalize draw</button></div>`:''}${e.state==='locked'?'<p class="callout green-callout">This draw is saved and locked. Go to Email to review delivery status and send. Message previews are optional.</p>':''}`;
 }
 function historyPanel() {
   const history=state.exchanges.filter(e=>['locked','archived','no_exchange'].includes(e.state));
@@ -221,6 +224,18 @@ document.addEventListener('click',async event=>{
     if(action==='group-settings'){showDialog(`<h2>${state.exchange.allow_group_join?'Close':'Enable'} group registration?</h2><p>${state.exchange.allow_group_join?'Existing saved lists stay available to their owners.':'Anyone holding the group link can submit a pending list. You will review their identity.'}</p><form data-form="group-settings"><button class="primary">${state.exchange.allow_group_join?'Close registration':'Enable registration'}</button></form>`);return;}
     if(action==='reveal'){working=true;await leaveCard(app.querySelector('.recipient-card'));revealed=true;renderRecipient();return;}
     if(action==='view-history'){selectedYear=Number(button.dataset.year);await loadAdmin();return;}
+    if(action==='test-matching'){
+      const year=state.year,label=button.textContent;
+      working=true;button.disabled=true;button.textContent='Testing…';matchingReport=null;
+      document.querySelector('#matching-test-result').textContent='Testing…';
+      try {
+        const report=await api('/admin/matching-test',{year});
+        if(state.year!==year)return;
+        matchingReport=report;renderAdmin();document.querySelector('#matching-test-result').focus();
+      }catch(error){renderAdmin();document.querySelector('[data-action="test-matching"]').focus();throw error;}
+      finally{button.textContent=label;}
+      return;
+    }
     if(action==='send'&&state.emailMode==='smtp'){showDialog('<h2>Send these emails to the family?</h2><p>Only pending messages will be sent. Check the recipient addresses and delivery status. Opening message content is optional.</p><form data-form="send"><label>Type SEND<input name="confirm" required autocomplete="off"></label><button class="primary">Send pending emails</button></form>');return;}
     if(action==='retry-email'){const mail=state.outbox.find(m=>m.id===id);showDialog(`<h2>Queue this message again?</h2><p>To: ${esc(mail.recipient_email)}</p><p>${mail.status==='uncertain'?'Check with the recipient first: the previous attempt may have delivered. Type CHECKED once you have verified they did not receive it.':'This will return the message to pending. Sending happens separately.'}</p><form data-form="retry"><input type="hidden" name="id" value="${id}">${mail.status==='uncertain'?'<label>Type CHECKED<input name="confirm" required></label>':''}<button class="primary">Queue for sending</button></form>`);return;}
     if(action==='revoke'){showDialog(`<h2>Revoke ${esc(personName(id))}'s access links?</h2><p>All their existing links and signed-in sessions for this year will stop working. Create and share a new link afterward.</p><form data-form="revoke"><input type="hidden" name="id" value="${id}"><button class="primary">Revoke links</button></form>`);return;}

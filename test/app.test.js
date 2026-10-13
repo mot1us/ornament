@@ -39,6 +39,48 @@ function seed(db,status='verified') {
   for(const p of members(db,2026)){savePerson(db,2026,{...p,email:`person-${p.id}@example.test`,active:true});db.prepare("UPDATE enrollments SET wishlist='A book' WHERE year=2026 AND person_id=?").run(p.id);}
 }
 
+test('matching diagnostics use the active roster without altering open, draft, finalized, or email records',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);
+  const inactive=members(db,2026).at(-1);savePerson(db,2026,{...inactive,active:false});
+  prepareMail(db,config,2026,'invite');
+  const snapshot=()=>JSON.stringify(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(({name})=>[name,db.prepare(`SELECT * FROM "${name}"`).all()]));
+  const verify=async()=>{
+    const before=snapshot();
+    const response=await call('/admin/matching-test',{year:2026,draws:1000000},admin);
+    assert.equal(response.status,200);assert.equal(response.data.status,'passed');
+    assert.equal(response.data.participants,9);assert.equal(response.data.requested,100);assert.equal(response.data.checked,100);
+    assert.equal(response.data.assignments,undefined);assert.equal(response.data.pairs,undefined);
+    for(const p of members(db,2026))for(const value of [p.id,p.name,p.email,p.wishlist])assert.equal(JSON.stringify(response.data).includes(value),false);
+    assert.equal(snapshot(),before);
+  };
+  await verify();
+  draftDraw(db,2026);await verify();
+  lockDraw(db,2026);prepareMail(db,config,2026,'assignment');await verify();
+});
+
+test('matching diagnostics require organizer authentication, origin and CSRF, and limit repeated runs',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);
+  assert.equal((await call('/admin/matching-test',{year:2026})).status,403);
+  assert.equal((await call('/admin/matching-test',{year:2026},{...admin,csrf:'wrong'})).status,403);
+  assert.equal((await call('/admin/matching-test',{year:2026},{...admin,headers:{Origin:'https://attacker.test'}})).status,403);
+  const link=inviteLink(db,config,2026,members(db,2026)[0].id),redeemed=await call('/redeem',{token:new URL(link).hash.slice(1)});
+  assert.equal((await call('/admin/matching-test',{year:2026},{cookie:redeemed.cookie,csrf:redeemed.data.csrf})).status,403);
+  for(let i=0;i<5;i++)assert.equal((await call('/admin/matching-test',{year:2026},admin)).status,200);
+  assert.equal((await call('/admin/matching-test',{year:2026},admin)).status,429);
+});
+
+test('matching diagnostics report impossible rules and unconfirmed history without relaxing rules',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db,'provisional');
+  const people=members(db,2026);
+  for(const recipient of people.filter(p=>p.id!==people[0].id))db.prepare('INSERT INTO exclusions(year,giver,recipient) VALUES (?,?,?)').run(2026,people[0].id,recipient.id);
+  const response=await call('/admin/matching-test',{year:2026},admin);
+  assert.equal(response.status,200);assert.equal(response.data.status,'impossible');assert.equal(response.data.checked,0);
+  assert.match(response.data.issues[0],/none were relaxed/);
+  assert.equal(response.data.history.find(h=>h.year===2025).status,'provisional');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM assignments WHERE year=2026').get().n,0);
+  assert.equal(db.prepare('SELECT state FROM exchanges WHERE year=2026').get().state,'open');
+});
+
 test('organizer login, CSRF, and origin restrictions protect private admin data',async t=>{
   const {call,admin}=await fixture(t);
   assert.equal((await call('/admin/state')).status,403);

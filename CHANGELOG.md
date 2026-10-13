@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- Add a private organizer matching tester: check up to 100 temporary draws against the active roster, exclusions, and two-year history without saving or revealing pairings or sending mail.
+- Bound testing time and request frequency; distinguish impossible rules from unfinished searches and flag unconfirmed history.
+- Verify all 8,320 small-roster exclusion configurations against an independent exhaustive oracle, plus privacy and preservation of finalized draws and email records.
+
 ## 0.6.1
 
 - Align dropdown arrows and control heights, enlarge tap targets, and stabilize disclosure and header layouts.
