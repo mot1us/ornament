@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- Align dropdown arrows and control heights, enlarge tap targets, and stabilize disclosure and header layouts.
+- Keep member and email actions visible in mobile cards, wrap dialog actions, and announce dialog titles and inline errors.
+- Preserve the Christmas letter design, private organizer defaults, and submit/edit flow.
+
 ## 0.6.0
 
 - Default to known-member invitations; keep group registration as an explicit organizer option.

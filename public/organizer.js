@@ -1,5 +1,8 @@
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const badge=(text,style='')=>`<span class="badge ${style}">${esc(text)}</span>`;
+export function responsiveTable(headers,rows,label) {
+  return `<div class="table-wrap"><table class="responsive-table" role="table" aria-label="${esc(label)}"><thead role="rowgroup"><tr role="row">${headers.map(h=>`<th scope="col" role="columnheader">${esc(h)}</th>`).join('')}</tr></thead><tbody role="rowgroup">${rows.map(cells=>`<tr role="row">${cells.map((cell,i)=>`<td role="cell" ${i===cells.length-1?'class="row-actions"':''}><span class="mobile-field-label" aria-hidden="true">${esc(headers[i])}</span>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
 export function checkSummary(p) {
   return p.changesRequested?badge('Changes requested','amber'):p.validation.passed?badge('Checks passed','green'):
     !p.validation.submitted?badge('Not submitted'):badge('Needs attention','amber');
@@ -12,7 +15,12 @@ export function privatePeoplePanel(state) {
   const pending=state.submissions.filter(p=>p.status==='pending');
   return `<div class="section-heading"><div><h2>People</h2><p>Add members, then email their invitations.</p></div>${mutable?'<button class="primary" data-action="add-person">+ Add person</button>':''}</div>
     <p class="privacy-note"><span aria-hidden="true">✉</span> Wish lists and messages stay hidden until you choose to reveal them.</p>
-    ${state.people.length?`<div class="table-wrap"><table><thead><tr><th>Person</th><th>Email</th><th>Wish list</th><th>Taking part</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${state.people.map(p=>`<tr><td><div class="person"><span class="avatar">${esc(p.name[0])}</span><strong>${esc(p.name)}</strong></div></td><td>${p.email?esc(p.email):'<span class="muted">Email needed</span>'}</td><td>${checkSummary(p)}</td><td>${badge(p.active?'Yes':'Sitting out',p.active?'green':'')}</td><td class="row-actions"><button class="secondary" data-action="wishlist-status" data-id="${esc(p.id)}">Checks &amp; options</button>${mutable?`<button class="quiet" data-action="edit-person" data-id="${esc(p.id)}">Edit member</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${esc(p.id)}">Update email</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Add family members and their email addresses to get started.</div>'}
+    ${state.people.length?responsiveTable(['Person','Email','Wish list','Taking part','Actions'],state.people.map(p=>[
+      `<div class="person"><strong>${esc(p.name)}</strong></div>`,
+      p.email?esc(p.email):'<span class="muted">Email needed</span>',
+      checkSummary(p),badge(p.active?'Yes':'Sitting out',p.active?'green':''),
+      `<button class="secondary" data-action="wishlist-status" data-id="${esc(p.id)}">Checks &amp; options</button>${mutable?`<button class="quiet" data-action="edit-person" data-id="${esc(p.id)}">Edit member</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${esc(p.id)}">Update email</button>`:''}`
+    ]),'Family members'):'<div class="empty">Add family members and their email addresses to get started.</div>'}
     ${pending.length?`<section class="submission-review"><div class="section-heading"><div><h2>Existing submissions ${badge(pending.length,'amber')}</h2><p>Review the identity and checks without opening the wish list.</p></div></div><ul class="submission-list">${pending.map(p=>`<li><div><strong>${esc(p.name)}</strong><small class="block muted">${esc(p.email)}</small>${checkSummary(p)}</div><button class="secondary" data-action="review-submission" data-id="${esc(p.id)}" ${mutable?'':'disabled'}>Review checks</button></li>`).join('')}</ul></section>`:''}
     ${mutable?`<details class="registration-options"><summary>Group registration ${badge(open?'Open':'Closed',open?'amber':'')}</summary><p>Optional: anyone with the group link can submit a list for review. Known-member invitations are the default.</p><button class="secondary" data-action="group-settings">${open?'Close group registration':'Enable group registration'}</button>${open?'<button class="secondary" data-action="share">Group link</button><button class="quiet" data-action="group-revoke">Revoke group link</button>':''}</details>`:''}`;
 }
