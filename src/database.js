@@ -63,6 +63,24 @@ export function openDatabase(dataDir) {
   if (!db.prepare('PRAGMA table_info(enrollments)').all().some(column=>column.name==='message')) {
     db.exec("ALTER TABLE enrollments ADD COLUMN message TEXT NOT NULL DEFAULT ''");
   }
+  if (!db.prepare('PRAGMA table_info(enrollments)').all().some(column=>column.name==='changes_requested')) {
+    db.exec("ALTER TABLE enrollments ADD COLUMN changes_requested TEXT NOT NULL DEFAULT ''");
+  }
+  if (!db.prepare('PRAGMA table_info(exchanges)').all().some(column=>column.name==='allow_group_join')) {
+    db.exec('ALTER TABLE exchanges ADD COLUMN allow_group_join INTEGER NOT NULL DEFAULT 0');
+    // Close anonymous entry, preserving saved submissions and their owner sessions.
+    db.exec("DELETE FROM group_tokens; DELETE FROM sessions WHERE role='group'");
+  }
+  if (!db.prepare('PRAGMA table_info(invite_tokens)').all().some(column=>column.name==='email')) {
+    transaction(db,()=>{
+      db.exec("ALTER TABLE invite_tokens ADD COLUMN email TEXT NOT NULL DEFAULT ''");
+      // Old reusable links cannot meet the new ownership and expiration policy.
+      // Preserve wish lists, draws, signed-in owners, and successful email records.
+      db.exec('DELETE FROM invite_tokens');
+      audit(db,'upgrade-access-policy',{singleUseInvitations:true});
+    });
+  }
+  db.exec('CREATE TABLE IF NOT EXISTS sign_in_events (created_at INTEGER NOT NULL)');
   // An interrupted SMTP transaction may have succeeded. Never automatically resend it.
   db.prepare("UPDATE outbox SET status='uncertain', error='Sending was interrupted. Check the recipient mailbox before retrying.' WHERE status='sending'").run();
   return db;
@@ -81,7 +99,7 @@ export function getExchange(db, year) {
   return row;
 }
 export function members(db, year) {
-  return db.prepare(`SELECT p.*, e.active, e.wishlist, e.message, e.gifts FROM people p JOIN enrollments e ON e.person_id=p.id
+  return db.prepare(`SELECT p.*, e.active, e.wishlist, e.message, e.gifts, e.changes_requested FROM people p JOIN enrollments e ON e.person_id=p.id
     WHERE e.year=? ORDER BY p.name COLLATE NOCASE`).all(year).map(row => ({...row, aliases: JSON.parse(row.aliases), gifts: JSON.parse(row.gifts)}));
 }
 

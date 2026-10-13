@@ -2,9 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { audit, ensureYear, getExchange, members, findPerson, transaction } from './database.js';
 import { generateDraw, validateDraw } from './matching.js';
 import { hash, secret } from './security.js';
+import { validateWishlist } from './validation.js';
 
 export const emailValid = email => typeof email === 'string' && email.length <= 254 && /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(email);
 export const normalizeEmail = email => typeof email === 'string' ? email.trim().toLowerCase() : '';
+export function clearChangesRequest(db,year,personId) {
+  db.prepare("UPDATE enrollments SET changes_requested='' WHERE year=? AND person_id=?").run(year,personId);
+  db.prepare(`UPDATE outbox SET status='cancelled',error='The participant has already submitted an updated wish list.'
+    WHERE year=? AND giver=? AND kind LIKE 'revision:%' AND status IN ('pending','preview','failed')`).run(year,personId);
+}
 export function checkEmailIdentity(db,email,id) {
   if (email && (!emailValid(email) || db.prepare('SELECT id FROM people WHERE lower(trim(email))=? AND id<>?').get(email,id || ''))) {
     throw new Error('Use a valid, separate email address for each person.');
@@ -114,6 +120,7 @@ export function lockDraw(db,year) {
   if (historyReadiness(db,year).some(h=>h.status !== 'verified')) throw new Error('Confirm the previous two years of history before finalizing. You can keep editing or generating drafts.');
   const people = members(db,year).filter(p=>p.active);
   if (people.some(p=>!emailValid(p.email))) throw new Error('Every participating person needs a valid email address before finalizing.');
+  if (people.some(p=>!validateWishlist(p,p.email).passed || p.changes_requested)) throw new Error('Every participating wish list must pass its checks and resolve requested changes before finalizing.');
   const pairs = db.prepare('SELECT giver,recipient FROM assignments WHERE year=?').all(year);
   const errors = validateDraw(pairs,people.map(p=>p.id),matchingOptions(db,year));
   if (errors.length) throw new Error(errors.join(' '));
@@ -124,10 +131,12 @@ export function lockDraw(db,year) {
 }
 
 export function inviteLink(db,config,year,personId) {
-  if (!db.prepare('SELECT person_id FROM enrollments WHERE year=? AND person_id=?').get(year,personId)) throw new Error('Person not in this exchange.');
+  const person=members(db,year).find(p=>p.id===personId);
+  if (!person?.active || !emailValid(person.email)) throw new Error('Choose an active person with a valid email address.');
   if (getExchange(db,year).state === 'archived') throw new Error('Historical exchanges do not issue access links.');
   const token = secret();
-  db.prepare('INSERT INTO invite_tokens(hash,year,person_id,expires) VALUES (?,?,?,?)').run(hash(token),year,personId,Date.now()+450*86400000);
+  db.prepare('DELETE FROM invite_tokens WHERE expires<=? OR (year=? AND person_id=?)').run(Date.now(),year,personId);
+  db.prepare('INSERT INTO invite_tokens(hash,year,person_id,expires,email) VALUES (?,?,?,?,?)').run(hash(token),year,personId,Date.now()+48*3600000,normalizeEmail(person.email));
   return `${config.publicUrl}/join#${token}`;
 }
 
@@ -136,16 +145,16 @@ export function makeEmail(db,config,year,personId,kind) {
   const person = members(db,year).find(p=>p.id===personId);
   if (!person?.active || !emailValid(person.email)) throw new Error('An active participant needs a valid email address.');
   if (kind === 'assignment' && exchange.state !== 'locked') throw new Error('Finalize the draw before preparing assignment emails.');
-  const link = inviteLink(db,config,year,personId);
+  const link = kind==='invite'?inviteLink(db,config,year,personId):`${config.publicUrl}/join`;
   const details = [exchange.budget && `Gift budget: ${exchange.budget}`, exchange.event_date && `Exchange date: ${exchange.event_date}`].filter(Boolean).join('\n');
   if (kind === 'invite') return {email:person.email,subject:`Your invitation · ${exchange.title}`,
-    body:`Hi ${person.name},\n\nOur Secret Santa is getting started. Use your personal link to add your wish list and gift ideas:\n\n${link}\n\n${details}\n\nKeep this link private: it opens your personal page.\n\nHappy gifting!`};
+    body:`Hi ${person.name},\n\nOur Secret Santa is getting started. Open your invitation to add your wish list and gift ideas:\n\n${link}\n\n${details}\n\nThis invitation works once and expires in 48 hours. Keep it private. If it expires, request a fresh sign-in link at ${config.publicUrl}/join.\n\nHappy gifting!`};
   const pair = db.prepare('SELECT recipient FROM assignments WHERE year=? AND giver=?').get(year,personId);
   const recipient = members(db,year).find(p=>p.id===pair.recipient);
   const gifts = recipient.gifts.map(g=>[g.label,g.url].filter(Boolean).join(': ')).join('\n');
   const message=recipient.message?`Message to you:\n${recipient.message}\n\n`:'';
   return {email:person.email,subject:`Your Secret Santa match · ${exchange.title}`,
-    body:`Hi ${person.name},\n\nYou are ${recipient.name}'s Secret Santa!\n\n${details}\n\nTheir wish list:\n${recipient.wishlist || 'They have not added a wish list yet.'}\n\n${message}${gifts}\n\nYour private page (with the latest wish list):\n${link}\n\nKeep your match and this link secret.\n\nHappy gifting!`};
+    body:`Hi ${person.name},\n\nYou are ${recipient.name}'s Secret Santa!\n\n${details}\n\nTheir wish list:\n${recipient.wishlist || 'They have not added a wish list yet.'}\n\n${message}${gifts}\n\nTo see the latest wish list, sign in with your email:\n${link}\n\nKeep your match secret.\n\nHappy gifting!`};
 }
 
 export function prepareMail(db,config,year,kind,ids) {

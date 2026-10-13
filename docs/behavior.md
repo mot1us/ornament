@@ -34,24 +34,48 @@ duplicate sends but cannot rule out a duplicate after an incorrect manual
 retry decision. `sent` means the provider accepted the message, not proof that
 the recipient opened it or that it avoided spam.
 
-The organizer shares one random, unguessable **Group link** for an exchange.
-It opens a form for a name, email, wish list, message to the gifter, and product
-links. Submission requires no account or email verification. Saving shows a finished
-list with an explicit **Edit wish list** action. Cancel discards unsaved edits;
-reopening the page shows the saved list. Up to five gift ideas can be added
-individually, and the note to the gifter is optional. A private browser
-session lets someone return to their own form for 30 days. The group link never
-reveals the roster, other submissions, email addresses, or matches.
+Known-member invitations are the default. The organizer adds or reuses stable
+participants and their email addresses, then explicitly prepares and dispatches
+invitation emails. Each invitation is bound to the member's current address,
+works once, and expires after 48 hours. Dispatch starts a fresh lifetime, including
+an explicitly reviewed retry. Issuing a new invitation replaces that person's
+previous invitation. A browser session lets them edit for 30 days; a fresh email
+sign-in works on another device or after the session expires.
 
-Submissions wait for organizer review. The organizer maps each one to a stable
-person, checks the email and content, then chooses **Approve wish list** or
-**Decline**. Review submissions before finalizing the draw. Once approved, the
-family form can change only that person's wishes, message, and product links;
-it cannot change the accepted identity or email. The shared link is intended
-for a trusted group: anyone who receives it can submit a form, and email
-ownership is not verified by this flow.
+Group registration is closed by default. An organizer can explicitly enable it
+for an open exchange; its random group link expires in 30 days. Anyone holding
+that link can submit a pending form without proving email ownership. Review their
+name/address and map it to a stable identity before approval. Closing registration
+revokes group entry links and unsubmitted sessions while retaining saved owner
+sessions. Upgrading from older releases closes group registration and retires
+legacy reusable personal links. Submissions, identities, signed-in owners,
+finalized draws, and successful delivery records are retained.
 
-Invitation and assignment messages include a private personal link. Assignment
+Organizer state contains identity/contact metadata and validation results, never
+wish-list text, gifter notes, gift URLs, current draw pairings, or email bodies.
+**Checks & options** reports local checks for a valid member email, a wish list or
+gift idea, text/gift limits, and http(s) product URL format without credentials.
+These checks do not contact product sites or an external AI, verify availability,
+or judge whether a gift is appropriate. Bad submissions cannot overwrite a saved
+list. Optional notes and links are not required. Finalization requires every
+active list to pass and resolve any correction request.
+
+**Request changes** saves the organizer's instruction and queues a separate email
+for explicit sending. A valid participant resubmission clears the instruction and
+cancels unsent correction emails. Successful or uncertain deliveries remain in
+the record unchanged.
+**Reveal wish list**, **Reveal matches**, and **Reveal preview** each require a
+deliberate confirmation and fetch private content from a separate authenticated,
+CSRF-protected endpoint. Reveals are recorded without their content in the audit
+log. Reloading organizer state hides private content again. Historical pairings
+remain visible when reviewing an archived year. Exporting private data is an
+explicit action; exports and SQLite backups include wish lists and matches.
+This is spoiler protection for an organizer who participates, not encryption
+against the VPS administrator, who controls the database.
+
+Invitation messages include the expiring invitation. Assignment messages link
+to `/join`, which requests a fresh sign-in email rather than including a reusable
+access credential. Assignment
 emails contain the recipient's name, wish list, message to the gifter, and
 product links as a snapshot taken when messages are prepared. The personal
 page shows the recipient's latest saved content. Later edits do not change
@@ -59,7 +83,7 @@ already prepared messages. The SMTP provider and the recipient's mail provider
 process these emails; their contents are not confined to the self-hosted database.
 
 Organizer authentication uses a server-side session and scrypt password hash.
-Existing personal links remain supported. The optional email sign-in page at
+The email sign-in page at
 `/join` sends a sign-in link only to a known, active participant in
 the latest open, drafted, or finalized exchange. Responses do not disclose
 whether an email is on the roster. Each person needs a separate email address.
@@ -67,8 +91,11 @@ Email sign-in tokens are random and hashed in SQLite, work once, and expire in
 15 minutes. Requests are limited by IP and by email, with email limits surviving
 restarts. Sign-in delivery never sends prepared invitation or assignment batches;
 failed or uncertain links are not retried automatically. Request a new link.
-Existing organizer-issued personal links remain valid and can be revoked, along
-with email sign-in links and sessions. Secure HttpOnly SameSite cookies,
+New invitations can be revoked together with email sign-in links and sessions.
+Legacy reusable links stop working after the upgrade; their owners can request
+fresh sign-in emails. Sign-in emails are bounded by address/IP limits and a
+persistent global budget of 20 per 15 minutes and 100 per rolling day. Submission
+saves are limited to 30 per session per 15 minutes. Secure HttpOnly SameSite cookies,
 CSRF tokens, origin checks, and a restrictive content security policy protect
 browser requests. Family member API responses contain only the person's own
 content and the name, wish list, message, and gift ideas of their recipient after

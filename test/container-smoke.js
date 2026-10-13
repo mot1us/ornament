@@ -15,6 +15,7 @@ function docker(args, required=true) {
 }
 try {
   docker(['run','--detach','--name',name,'--read-only','--tmpfs','/tmp',
+    '--memory','256m','--cpus','0.50','--pids-limit','100',
     '--cap-drop','ALL','--security-opt','no-new-privileges:true','--network','none',
     '--env',`ADMIN_PASSWORD_HASH=${passwordHash('synthetic-container-check')}`,
     '--env','PUBLIC_URL=https://ornament.example.com','--env','COOKIE_SECURE=true',
@@ -47,7 +48,7 @@ try {
   docker(['exec',name,'node','scripts/backup.js','/backups']);
   docker(['exec',name,'node','-e',
     "require('node:assert/strict')(require('node:fs').readdirSync('/backups').some(n=>n.endsWith('.sqlite')))"]);
-  console.log('Container health, empty private database, non-root runtime, and backup passed.');
+  console.log('Container health, empty private database, capped non-root runtime, and backup passed.');
 } catch(error) {
   process.stderr.write(docker(['logs',name],false).stderr||'');
   throw error;

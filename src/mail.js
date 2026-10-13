@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer';
 import { escapeHtml } from './security.js';
 import { audit } from './database.js';
 import { validSignIn, expireSignIns } from './signin.js';
+import { makeEmail } from './service.js';
 
 export function createMailer(db,config,providedTransport) {
   let busy = false;
@@ -15,6 +16,12 @@ export function createMailer(db,config,providedTransport) {
       return;
     }
     if (!transport) throw new Error('Configure SMTP before sending real email.');
+    if (row.kind==='invite') {
+      // Start the invitation lifetime at dispatch, including reviewed retries.
+      const current=makeEmail(db,config,row.year,row.giver,'invite');
+      db.prepare('UPDATE outbox SET body=?,subject=?,recipient_email=? WHERE id=? AND status=\'pending\'').run(current.body,current.subject,current.email,row.id);
+      row={...row,body:current.body,subject:current.subject,recipient_email:current.email};
+    }
     const claimed = db.prepare("UPDATE outbox SET status='sending',attempts=attempts+1 WHERE id=? AND status='pending'").run(row.id);
     if (!claimed.changes) return;
     try {
@@ -48,7 +55,7 @@ export function createMailer(db,config,providedTransport) {
       if (config.emailMode === 'smtp' && !transport) throw new Error('Configure SMTP before sending real email.');
       busy = true;
       try {
-        const rows = db.prepare("SELECT * FROM outbox WHERE year=? AND status='pending' AND kind IN ('invite','assignment') ORDER BY id").all(year);
+        const rows = db.prepare("SELECT * FROM outbox WHERE year=? AND status='pending' AND (kind IN ('invite','assignment') OR kind LIKE 'revision:%') ORDER BY id").all(year);
         for (const row of rows) {
           await deliverRow(row);
         }

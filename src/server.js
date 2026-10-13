@@ -1,13 +1,16 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { openDatabase, audit, getExchange, members, transaction, importHistory } from './database.js';
 import { createExchange, savePerson, emailValid, matchingOptions, historyReadiness, mutable, invalidateDraft, draftDraw,
-  lockDraw, inviteLink, giftList, prepareMail, normalizeEmail, checkEmailIdentity } from './service.js';
+  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest } from './service.js';
 import { secret, hash, passwordMatches, readConfig } from './security.js';
 import { createMailer } from './mail.js';
 import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
 import { groupLink, submissionProfile, saveSubmission, listSubmissions, approveSubmission, rejectSubmission } from './submissions.js';
+import { checkedWishlist, validateWishlist } from './validation.js';
+import { validateDraw } from './matching.js';
 
 export function createApp(config,db,providedTransport) {
   const app = express();
@@ -55,6 +58,20 @@ export function createApp(config,db,providedTransport) {
     if (++entry.count > 15) return res.status(429).json({error:'Too many login attempts. Try again in fifteen minutes.'});
     next();
   }
+  function submissionLimiter(req,res,next) {
+    const key=`save:${req.session.hash}`,now=Date.now();
+    for(const [id,entry] of attempts)if(entry.until<now)attempts.delete(id);
+    if(!attempts.has(key) && attempts.size>=1000)return res.status(429).json({error:'Please try again later.'});
+    const entry=attempts.get(key)||{count:0,until:now+15*60000};attempts.set(key,entry);
+    if(++entry.count>30)return res.status(429).json({error:'Your list is saved. Wait fifteen minutes before making more changes.'});
+    next();
+  }
+  const confirmReveal=req=>{if(req.body.confirm!=='REVEAL')throw new Error('Confirm that you want to reveal private content.');};
+  const drawStatus=year=>{
+    const people=members(db,year).filter(p=>p.active),pairs=db.prepare('SELECT giver,recipient FROM assignments WHERE year=?').all(year);
+    const issues=pairs.length?validateDraw(pairs,people.map(p=>p.id),matchingOptions(db,year)):['Generate a draft first.'];
+    return {count:pairs.length,passed:!issues.length,issues};
+  };
   app.post('/api/login',limiter,(req,res)=>{
     if (!passwordMatches(req.body.password,config.password)) return res.status(401).json({error:'Incorrect organizer password.'});
     if (req.session) db.prepare('DELETE FROM sessions WHERE hash=?').run(req.session.hash);
@@ -75,8 +92,11 @@ export function createApp(config,db,providedTransport) {
     if (token.length!==43) return res.status(401).json({error:'This link is invalid or expired. Request a new link from the homepage.'});
     const result=transaction(db,()=>{
       const tokenHash=hash(token);
-      const invite=consumeSignIn(db,tokenHash) || db.prepare('SELECT * FROM invite_tokens WHERE hash=? AND expires>?').get(tokenHash,Date.now());
+      const invite=consumeSignIn(db,tokenHash) || db.prepare(`SELECT t.* FROM invite_tokens t JOIN people p ON p.id=t.person_id
+        JOIN enrollments e ON e.person_id=t.person_id AND e.year=t.year JOIN exchanges x ON x.year=t.year
+        WHERE t.hash=? AND t.expires>? AND t.email=lower(trim(p.email)) AND e.active=1 AND x.state IN ('open','drafted','locked')`).get(tokenHash,Date.now());
       if (!invite) return null;
+      db.prepare('DELETE FROM invite_tokens WHERE hash=?').run(tokenHash);
       if (req.session) db.prepare('DELETE FROM sessions WHERE hash=?').run(req.session.hash);
       return makeSession(res,'member',invite.person_id,invite.year);
     });
@@ -90,6 +110,7 @@ export function createApp(config,db,providedTransport) {
     if (req.session?.role==='submission' && req.session.year===invite.year) {
       return res.json({role:'submission',csrf:req.session.csrf,year:invite.year});
     }
+    if(!getExchange(db,invite.year).allow_group_join)throw new Error('Group registration is closed. Use your emailed invitation or sign in.');
     mutable(db,invite.year);
     const result=transaction(db,()=>{
       if (req.session) db.prepare('DELETE FROM sessions WHERE hash=?').run(req.session.hash);
@@ -114,14 +135,59 @@ export function createApp(config,db,providedTransport) {
     const exchanges = db.prepare('SELECT * FROM exchanges ORDER BY year DESC').all();
     const year = Number(req.query.year || exchanges[0]?.year);
     const exchange = exchanges.find(e=>e.year===year) || null;
-    const people = exchange ? members(db,year) : [];
+    const people = exchange ? members(db,year).map(p=>({id:p.id,name:p.name,email:p.email,aliases:p.aliases,active:p.active,
+      validation:validateWishlist(p,p.email),changesRequested:p.changes_requested})) : [];
     res.json({exchanges,year,exchange,people,identities:db.prepare('SELECT id,name FROM people ORDER BY name COLLATE NOCASE').all(),submissions:exchange?listSubmissions(db,year):[],
       exclusions:exchange ? matchingOptions(db,year).exclusions : [],
-      assignments:exchange ? db.prepare('SELECT giver,recipient FROM assignments WHERE year=?').all(year) : [],
+      assignments:exchange?.state==='archived' ? db.prepare('SELECT giver,recipient FROM assignments WHERE year=?').all(year) : [],
+      draw:exchange?drawStatus(year):null,
       history:exchange ? historyReadiness(db,year) : [],
-      outbox:exchange ? db.prepare('SELECT id,giver,kind,recipient_email,subject,body,status,error,attempts,sent_at FROM outbox WHERE year=? ORDER BY kind,giver').all(year) : [],
+      outbox:exchange ? db.prepare('SELECT id,giver,kind,recipient_email,subject,status,error,attempts,sent_at FROM outbox WHERE year=? ORDER BY kind,giver').all(year) : [],
       emailMode:config.emailMode,smtpReady:mailer.ready,
       audit:db.prepare('SELECT action,detail,created_at FROM audit ORDER BY id DESC LIMIT 20').all()});
+  });
+  app.post('/api/admin/wishlist/reveal',(req,res)=>{
+    confirmReveal(req);const year=Number(req.body.year),person=members(db,year).find(p=>p.id===req.body.personId);
+    if(!person)throw new Error('Choose a participant in this exchange.');
+    audit(db,'reveal-wishlist',{year,personId:person.id});
+    res.json({name:person.name,wishlist:person.wishlist,message:person.message,gifts:person.gifts});
+  });
+  app.post('/api/admin/submissions/reveal',(req,res)=>{
+    confirmReveal(req);const row=db.prepare('SELECT year,name FROM submissions WHERE id=?').get(req.body.id);
+    if(!row)throw new Error('Choose a saved submission.');
+    audit(db,'reveal-submission',{year:row.year,id:req.body.id});
+    res.json({...submissionProfile(db,row.year,req.body.id),name:row.name});
+  });
+  app.post('/api/admin/draw/reveal',(req,res)=>{
+    confirmReveal(req);const year=Number(req.body.year);getExchange(db,year);
+    audit(db,'reveal-draw',{year});res.json({assignments:db.prepare('SELECT giver,recipient FROM assignments WHERE year=?').all(year)});
+  });
+  app.post('/api/admin/mail/preview',(req,res)=>{
+    confirmReveal(req);expireSignIns(db);
+    const mail=db.prepare('SELECT subject,recipient_email,body,year FROM outbox WHERE id=?').get(req.body.id);
+    if(!mail)throw new Error('Choose a prepared email.');
+    audit(db,'reveal-email',{year:mail.year,id:req.body.id});res.json(mail);
+  });
+  app.post('/api/admin/changes-request',(req,res)=>{
+    const year=Number(req.body.year),exchange=getExchange(db,year),person=members(db,year).find(p=>p.id===req.body.personId);
+    const note=typeof req.body.note==='string'?req.body.note.trim():'';
+    if(!['open','drafted','locked'].includes(exchange.state)||!person?.active||!emailValid(person.email)||!note||note.length>1000)throw new Error('Choose an active person and add a correction request under 1,000 characters.');
+    transaction(db,()=>{
+      db.prepare('UPDATE enrollments SET changes_requested=? WHERE year=? AND person_id=?').run(note,year,person.id);
+      const id=randomUUID();
+      db.prepare('INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body) VALUES (?,?,?,?,?,?,?)').run(id,year,person.id,`revision:${id}`,person.email,
+        `Update your wish list · ${exchange.title}`,`Hi ${person.name},\n\nYour organizer asked for an update:\n\n${note}\n\nOpen Ornament to edit and submit your wish list again:\n${config.publicUrl}/join\n\nYour sign-in email works once and expires in 15 minutes.`);
+      audit(db,'request-wishlist-changes',{year,personId:person.id});
+    });res.json({ok:true});
+  });
+  app.post('/api/admin/group-settings',(req,res)=>{
+    const year=Number(req.body.year);mutable(db,year);
+    if(typeof req.body.enabled!=='boolean')throw new Error('Choose whether to allow group registration.');
+    transaction(db,()=>{
+      db.prepare('UPDATE exchanges SET allow_group_join=? WHERE year=?').run(req.body.enabled?1:0,year);
+      if(!req.body.enabled){db.prepare('DELETE FROM group_tokens WHERE year=?').run(year);db.prepare("DELETE FROM sessions WHERE role='group' AND year=?").run(year);}
+      audit(db,'group-registration',{year,enabled:req.body.enabled});
+    });res.json({ok:true});
   });
   app.get('/api/admin/export',(_req,res)=>{
     const exported = {schema:1,exportedAt:new Date().toISOString(),people:db.prepare('SELECT * FROM people').all(),
@@ -190,7 +256,7 @@ export function createApp(config,db,providedTransport) {
       invalidateDraft(db,year);audit(db,'save-exclusions',{year});
     });res.json({ok:true});
   });
-  app.post('/api/admin/draft',(req,res)=>res.json({assignments:draftDraw(db,Number(req.body.year))}));
+  app.post('/api/admin/draft',(req,res)=>{const year=Number(req.body.year);draftDraw(db,year);res.json({ok:true,draw:drawStatus(year)});});
   app.post('/api/admin/finalize',(req,res)=>{
     if (req.body.confirm !== 'FINALIZE') throw new Error('Type FINALIZE to confirm.');
     lockDraw(db,Number(req.body.year));res.json({ok:true});
@@ -236,6 +302,7 @@ export function createApp(config,db,providedTransport) {
   });
   app.use('/api/group',(req,res,next)=>{
     if (!['group','submission'].includes(req.session?.role)) return res.status(403).json({error:'Open the group link your organizer shared.'});
+    if(req.session.role==='group' && !getExchange(db,req.session.year).allow_group_join)return res.status(403).json({error:'Group registration is closed.'});
     next();
   });
   app.get('/api/group/profile',(req,res)=>{
@@ -244,7 +311,7 @@ export function createApp(config,db,providedTransport) {
     res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state},
       submission:role==='submission'?submissionProfile(db,year,id):null});
   });
-  app.post('/api/group/profile',(req,res)=>{
+  app.post('/api/group/profile',submissionLimiter,(req,res)=>{
     const {year,role,person_id:id}=req.session;
     const submissionId=saveSubmission(db,year,role==='submission'?id:null,req.body);
     if (role==='submission') return res.json({role,csrf:req.session.csrf,year});
@@ -255,6 +322,8 @@ export function createApp(config,db,providedTransport) {
   });
   app.use('/api/member',(req,res,next)=>{
     if (req.session?.role!=='member') return res.status(403).json({error:'Sign in from the homepage.'});
+    if(!db.prepare(`SELECT 1 FROM enrollments e JOIN exchanges x ON x.year=e.year WHERE e.year=? AND e.person_id=?
+      AND e.active=1 AND x.state IN ('open','drafted','locked')`).get(req.session.year,req.session.person_id))return res.status(403).json({error:'Your participation is no longer active. Ask the organizer.'});
     next();
   });
   app.get('/api/member/profile',(req,res)=>{
@@ -270,16 +339,18 @@ export function createApp(config,db,providedTransport) {
       if (target) recipient={name:target.name,wishlist:target.wishlist,message:target.message,gifts:target.gifts};
     }
     res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state},
-      person:{name:person.name,active:Boolean(person.active),wishlist:person.wishlist,message:person.message,gifts:person.gifts},recipient});
+      person:{name:person.name,active:Boolean(person.active),wishlist:person.wishlist,message:person.message,gifts:person.gifts,changesRequested:person.changes_requested},recipient});
   });
-  app.post('/api/member/profile',(req,res)=>{
+  app.post('/api/member/profile',submissionLimiter,(req,res)=>{
     const {year,person_id:id}=req.session;
     if (!db.prepare('SELECT person_id FROM enrollments WHERE year=? AND person_id=?').get(year,id)) throw new Error('Participant not found.');
     const current=getExchange(db,year);
     if (current.state==='archived') throw new Error('This exchange is archived.');
-    const wishlist=String(req.body.wishlist||'').slice(0,5000),message=String(req.body.message||'').slice(0,2000),gifts=JSON.stringify(giftList(req.body.gifts||[]));
+    const email=db.prepare('SELECT email FROM people WHERE id=?').get(id).email;
+    const content=checkedWishlist(req.body,email),{wishlist,message}=content,gifts=JSON.stringify(content.gifts);
     transaction(db,()=>{
       db.prepare('UPDATE enrollments SET wishlist=?,message=?,gifts=? WHERE year=? AND person_id=?').run(wishlist,message,gifts,year,id);
+      clearChangesRequest(db,year,id);
       db.prepare("UPDATE submissions SET wishlist=?,message=?,gifts=?,updated_at=CURRENT_TIMESTAMP WHERE year=? AND person_id=? AND status='approved'").run(wishlist,message,gifts,year,id);
       audit(db,'save-wishlist',{year,id});
     });res.json({ok:true});

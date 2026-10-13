@@ -1,7 +1,10 @@
 services:
   ornament:
-    image: ghcr.io/mot1us/ornament:0.5.1
+    image: ghcr.io/mot1us/ornament:0.6.0
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.50
+    pids_limit: 100
     environment:
       ADMIN_PASSWORD_HASH: "${ADMIN_PASSWORD_HASH:-}"
       PUBLIC_URL: "${PUBLIC_URL:-http://localhost:3080}"
@@ -32,8 +35,11 @@ services:
       - ALL
 
   ornament-backup:
-    image: ghcr.io/mot1us/ornament:0.5.1
+    image: ghcr.io/mot1us/ornament:0.6.0
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 50
     command: ["node", "scripts/backup-loop.js"]
     environment:
       DATA_DIR: /data

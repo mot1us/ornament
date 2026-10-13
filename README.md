@@ -1,10 +1,12 @@
 # Ornament
 
 Self-hosted Secret Santa for family and friends.
-Share one group link, collect wish lists, then draw names and email matches.
+Add your family members, email invitations, collect private wish lists, then draw names and email matches.
 
 - Avoids matches from the previous two years.
 - Organizer controls people, exclusions, draws, and email.
+- Wish lists, messages, and current matches stay hidden from the organizer until explicitly revealed.
+- Local checks report submission readiness; correction requests can be emailed without opening lists.
 - Private SQLite data and daily backups on your server.
 - Free and [MIT licensed](LICENSE). Each group runs its own instance.
 
@@ -21,9 +23,15 @@ npm run dev
 ```
 
 Open [localhost:3080/admin](http://localhost:3080/admin) to set up an exchange.
-Copy **Group link** and share it privately. People enter their name, email,
-wish list, message to their gifter, and product links without signing in.
-Review submissions before drawing names. Email starts in preview mode.
+Add known participants and their email addresses, including yourself if you are
+taking part. In **Email**, prepare wish-list invitations, check recipient addresses,
+then send. Each invitation works once for 48 hours; returning participants can
+request a 15-minute sign-in email at `/join`. Email starts in preview mode.
+
+The dashboard shows submission checks instead of private content. Use **Checks &
+options** to request changes or deliberately reveal a wish list. Draw checks and
+message delivery can be reviewed without opening matches or email bodies.
+Group-link registration remains an explicit option, closed by default.
 
 ## Self-host
 

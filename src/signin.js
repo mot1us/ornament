@@ -9,6 +9,7 @@ export function expireSignIns(db,now=Date.now()) {
     WHERE kind LIKE 'signin:%' AND status IN ('pending','preview','failed','uncertain')
     AND NOT EXISTS (SELECT 1 FROM sign_in_tokens WHERE mail_id=outbox.id)`).run();
   db.prepare('DELETE FROM sign_in_requests WHERE window_start<=?').run(now-3600000);
+  db.prepare('DELETE FROM sign_in_events WHERE created_at<=?').run(now-86400000);
 }
 
 export function prepareSignIn(db,config,input,now=Date.now()) {
@@ -24,7 +25,10 @@ export function prepareSignIn(db,config,input,now=Date.now()) {
   const person=people[0],emailHash=hash(email);
   const previous=db.prepare('SELECT * FROM sign_in_requests WHERE email_hash=?').get(emailHash);
   if (previous && (now-previous.last_request<60000 || previous.count>=5)) return null;
+  if (db.prepare('SELECT count(*) AS count FROM sign_in_events').get().count>=100 ||
+      db.prepare('SELECT count(*) AS count FROM sign_in_events WHERE created_at>?').get(now-15*60000).count>=20) return null;
   return transaction(db,()=>{
+    db.prepare('INSERT INTO sign_in_events(created_at) VALUES (?)').run(now);
     db.prepare(`INSERT INTO sign_in_requests(email_hash,last_request,window_start,count) VALUES (?,?,?,1)
       ON CONFLICT(email_hash) DO UPDATE SET last_request=excluded.last_request,count=count+1`).run(emailHash,now,now);
     const token=secret(),id=randomUUID();

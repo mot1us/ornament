@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- Default to known-member invitations; keep group registration as an explicit organizer option.
+- Make invitations single-use for 48 hours, retire legacy reusable links, limit sign-in email volume and submission writes, and bound container resources.
+- Hide wish lists, messages, current matches, and email bodies from the organizer until explicitly revealed; show local validation checks and queue correction requests.
+- Preserve saved submissions, participant identities, finalized draws, and successful delivery records.
+
 ## 0.5.1
 
 - Remove decorative slogans and shorten participant instructions, keeping the letter-to-Santa design and animations.

@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { audit, findPerson, getExchange, transaction } from './database.js';
-import { checkEmailIdentity, emailValid, giftList, invalidateDraft, mutable, normalizeEmail } from './service.js';
+import { checkEmailIdentity, clearChangesRequest, emailValid, invalidateDraft, mutable, normalizeEmail } from './service.js';
 import { hash, secret } from './security.js';
+import { checkedWishlist, validateWishlist } from './validation.js';
 
 export function groupLink(db,config,year) {
   mutable(db,year);
+  if (!getExchange(db,year).allow_group_join) throw new Error('Group registration is closed. Use your emailed invitation or sign in.');
   const token=secret();
   db.prepare('DELETE FROM group_tokens WHERE expires<=?').run(Date.now());
-  db.prepare('INSERT INTO group_tokens(hash,year,expires) VALUES (?,?,?)').run(hash(token),year,Date.now()+450*86400000);
+  db.prepare('INSERT INTO group_tokens(hash,year,expires) VALUES (?,?,?)').run(hash(token),year,Date.now()+30*86400000);
   return `${config.publicUrl}/#group-${token}`;
 }
 
@@ -15,18 +17,15 @@ function fields(input) {
   const name=typeof input.name==='string'?input.name.trim():'';
   const email=normalizeEmail(input.email);
   if (!name || name.length>80 || !emailValid(email)) throw new Error('Enter your name and a valid email address.');
-  const wishlist=typeof input.wishlist==='string'?input.wishlist.trim():'';
-  const message=typeof input.message==='string'?input.message.trim():'';
-  if (wishlist.length>5000 || message.length>2000) throw new Error('Keep your wish list under 5,000 characters and your message under 2,000.');
-  const gifts=giftList(input.gifts || []);
-  if (!wishlist && !gifts.length) throw new Error('Add a wish list or at least one gift idea.');
+  const {wishlist,message,gifts}=checkedWishlist(input,email);
   return {name,email,wishlist,message,gifts};
 }
 
 export function submissionProfile(db,year,id) {
   const row=db.prepare('SELECT * FROM submissions WHERE id=? AND year=?').get(id,year);
   if (!row) throw new Error('Your saved wish list could not be found.');
-  return {name:row.name,email:row.email,wishlist:row.wishlist,message:row.message,gifts:JSON.parse(row.gifts),status:row.status};
+  const changes=row.person_id && db.prepare('SELECT changes_requested FROM enrollments WHERE year=? AND person_id=?').get(year,row.person_id)?.changes_requested;
+  return {name:row.name,email:row.email,wishlist:row.wishlist,message:row.message,gifts:JSON.parse(row.gifts),status:row.status,...(changes?{changesRequested:changes}:{})};
 }
 
 export function saveSubmission(db,year,id,input) {
@@ -50,6 +49,7 @@ export function saveSubmission(db,year,id,input) {
     if (existing?.status==='approved') {
       db.prepare('UPDATE enrollments SET wishlist=?,message=?,gifts=? WHERE year=? AND person_id=?').run(
         values.wishlist,values.message,JSON.stringify(values.gifts),year,existing.person_id);
+      clearChangesRequest(db,year,existing.person_id);
     }
     audit(db,'submit-wishlist',{year,id:submissionId});
     return submissionId;
@@ -58,7 +58,7 @@ export function saveSubmission(db,year,id,input) {
 
 export function listSubmissions(db,year) {
   return db.prepare('SELECT * FROM submissions WHERE year=? ORDER BY updated_at,id').all(year).map(row=>({
-    id:row.id,name:row.name,email:row.email,wishlist:row.wishlist,message:row.message,gifts:JSON.parse(row.gifts),
+    id:row.id,name:row.name,email:row.email,validation:validateWishlist({...row,gifts:JSON.parse(row.gifts)},row.email),
     status:row.status,personId:row.person_id,suggestedPersonId:findPerson(db,row.name)?.id || null
   }));
 }
@@ -67,6 +67,7 @@ export function approveSubmission(db,id,requestedPersonId) {
   const submission=db.prepare('SELECT * FROM submissions WHERE id=?').get(id);
   if (!submission || submission.status!=='pending') throw new Error('Choose a pending wish list to review.');
   const year=submission.year;mutable(db,year);
+  if (!validateWishlist({...submission,gifts:JSON.parse(submission.gifts)},submission.email).passed) throw new Error('This wish list needs corrections before approval.');
   const newPerson=!requestedPersonId || requestedPersonId==='new';
   const person=newPerson?null:db.prepare('SELECT * FROM people WHERE id=?').get(requestedPersonId);
   if (!newPerson && !person) throw new Error('Choose an existing person or create a new person.');

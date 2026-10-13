@@ -1,0 +1,28 @@
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const badge=(text,style='')=>`<span class="badge ${style}">${esc(text)}</span>`;
+export function checkSummary(p) {
+  return p.changesRequested?badge('Changes requested','amber'):p.validation.passed?badge('Checks passed','green'):
+    !p.validation.submitted?badge('Not submitted'):badge('Needs attention','amber');
+}
+export function validationDetails(validation) {
+  return `<ul class="validation-checks">${validation.checks.map(c=>`<li><span aria-hidden="true">${c.passed?'✓':'!'}</span>${esc(c.label)} ${badge(c.passed?'Passed':'Needs attention',c.passed?'green':'amber')}</li>`).join('')}</ul><p class="section-note">Format checks only. Product availability and personal suitability are not checked.</p>`;
+}
+export function privatePeoplePanel(state) {
+  const mutable=['open','drafted'].includes(state.exchange.state),open=state.exchange.allow_group_join;
+  const pending=state.submissions.filter(p=>p.status==='pending');
+  return `<div class="section-heading"><div><h2>People</h2><p>Add members, then email their invitations.</p></div>${mutable?'<button class="primary" data-action="add-person">+ Add person</button>':''}</div>
+    <p class="privacy-note"><span aria-hidden="true">✉</span> Wish lists and messages stay hidden until you choose to reveal them.</p>
+    ${state.people.length?`<div class="table-wrap"><table><thead><tr><th>Person</th><th>Email</th><th>Wish list</th><th>Taking part</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${state.people.map(p=>`<tr><td><div class="person"><span class="avatar">${esc(p.name[0])}</span><strong>${esc(p.name)}</strong></div></td><td>${p.email?esc(p.email):'<span class="muted">Email needed</span>'}</td><td>${checkSummary(p)}</td><td>${badge(p.active?'Yes':'Sitting out',p.active?'green':'')}</td><td class="row-actions"><button class="secondary" data-action="wishlist-status" data-id="${esc(p.id)}">Checks &amp; options</button>${mutable?`<button class="quiet" data-action="edit-person" data-id="${esc(p.id)}">Edit member</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${esc(p.id)}">Update email</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty">Add family members and their email addresses to get started.</div>'}
+    ${pending.length?`<section class="submission-review"><div class="section-heading"><div><h2>Existing submissions ${badge(pending.length,'amber')}</h2><p>Review the identity and checks without opening the wish list.</p></div></div><ul class="submission-list">${pending.map(p=>`<li><div><strong>${esc(p.name)}</strong><small class="block muted">${esc(p.email)}</small>${checkSummary(p)}</div><button class="secondary" data-action="review-submission" data-id="${esc(p.id)}" ${mutable?'':'disabled'}>Review checks</button></li>`).join('')}</ul></section>`:''}
+    ${mutable?`<details class="registration-options"><summary>Group registration ${badge(open?'Open':'Closed',open?'amber':'')}</summary><p>Optional: anyone with the group link can submit a list for review. Known-member invitations are the default.</p><button class="secondary" data-action="group-settings">${open?'Close group registration':'Enable group registration'}</button>${open?'<button class="secondary" data-action="share">Group link</button><button class="quiet" data-action="group-revoke">Revoke group link</button>':''}</details>`:''}`;
+}
+export function personChecks(p,state) {
+  return `<h2>${esc(p.name)}’s wish-list checks</h2>${checkSummary(p)}${validationDetails(p.validation)}${p.changesRequested?`<p class="callout">Your request: ${esc(p.changesRequested)}</p>`:''}<div class="review-actions"><button class="secondary" data-action="confirm-wishlist-reveal" data-id="${esc(p.id)}">Reveal wish list</button>${p.active&&state.exchange.state!=='archived'?`<button class="secondary" data-action="request-changes" data-id="${esc(p.id)}">Request changes</button><button class="quiet" data-action="link" data-id="${esc(p.id)}">Create invitation link</button><button class="quiet" data-action="revoke" data-id="${esc(p.id)}">Revoke access</button>`:''}</div>`;
+}
+export function privateSubmissionReview(p,state) {
+  return `<h2>Review ${esc(p.name)}</h2><p>${esc(p.email)}</p>${validationDetails(p.validation)}<button class="secondary" data-action="confirm-submission-reveal" data-id="${esc(p.id)}">Reveal submission</button><form data-form="approve-submission"><input type="hidden" name="id" value="${esc(p.id)}"><label>Participant<select name="personId">${state.identities.map(person=>`<option value="${esc(person.id)}" ${person.id===p.suggestedPersonId?'selected':''}>${esc(person.name)}</option>`).join('')}<option value="new" ${p.suggestedPersonId?'':'selected'}>Add as a new person</option></select></label><p class="section-note">Verify the name and email. Reuse their existing identity to keep match history.</p><div class="review-actions"><button class="primary" ${p.validation.passed?'':'disabled'}>Approve wish list</button><button type="button" class="quiet" data-action="reject-submission" data-id="${esc(p.id)}">Decline</button></div></form>`;
+}
+export function revealConfirmation(kind,id='') {
+  const label={wishlist:'this wish list and message',submission:'this submission',email:'this email and any match details',draw:'all giver-to-recipient matches'}[kind];
+  return `<h2>Reveal private content?</h2><p>This will show ${label}. You can continue organizing without opening it.</p><form data-form="reveal-private"><input type="hidden" name="kind" value="${kind}"><input type="hidden" name="id" value="${esc(id)}"><button class="primary">Reveal content</button></form>`;
+}

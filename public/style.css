@@ -302,3 +302,9 @@ dialog[open]::backdrop { animation: page-arrive 180ms both; }
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   button:hover:not(:disabled), button:active:not(:disabled) { transform: none; }
 }
+
+.privacy-note{display:flex;align-items:center;gap:.6rem;background:var(--green-soft,#e8ecdd);padding:1rem;border-radius:12px;margin-bottom:1.5rem}
+.validation-checks{list-style:none;padding:0;margin:1.5rem 0}.validation-checks li{display:flex;align-items:center;gap:.6rem;padding:.65rem 0;border-bottom:1px solid var(--line,#ddd)}.validation-checks .badge{margin-left:auto}
+.registration-options{margin-top:2rem;padding:1rem;border:1px solid var(--line,#ddd);border-radius:12px}.registration-options summary{cursor:pointer}.registration-options button{margin:.4rem .4rem .4rem 0}
+.private-draw{text-align:center}.private-draw p{max-width:42rem;margin:1rem auto}.row-actions{flex-wrap:wrap}
+@media(max-width:600px){.validation-checks li{flex-wrap:wrap}.validation-checks .badge{margin-left:0}.privacy-note{align-items:flex-start}}
