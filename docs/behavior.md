@@ -3,6 +3,32 @@
 People have permanent random IDs, a display name, alternate names, and an email
 address. Annual enrollments hold participation, wish lists, messages to gifters,
 and gift ideas with product links.
+The People page is the main invitation workflow: add or edit family members,
+review the listed recipients, explicitly send their invitations, and see who has
+submitted. A new year automatically carries the most recent earlier roster that
+has members, including its participation choices; wish lists, messages, gift
+links, and exclusions start fresh. On the first upgrade to this behavior,
+missing prior-year members are added to existing open or drafted exchanges.
+Existing annual content is not overwritten, and finalized or archived exchanges
+are not changed. Adding members to an existing draft discards that stale draft.
+The migration runs once, so later participation choices remain stable across
+restarts.
+
+Leave out removes a person from this year's active roster, keeps their identity
+and private content, and cancels unsent invitation records. Include brings them
+back. Finalized rosters remain locked. Add person can select a saved member or
+recognize an existing name/alias before explicitly reusing their identity.
+
+Send invitations requires a recipient review and confirmation. It only sends
+invitation records for the reviewed active members who have not submitted and
+have a new, pending, previewed, or cancelled invitation. The server rechecks the
+reviewed IDs and email addresses. Successful, failed, or uncertain deliveries
+are not automatically resent; delivery issues still require the existing
+explicit retry workflow. A participant who has already submitted is not invited
+again by this action. Assignment, correction, and sign-in messages are not sent
+by this invitation-only action. Preview mode labels records as Preview only and
+sends no email. SMTP success means the provider accepted the email.
+
 Each year has independent settings, exclusions, and assignments. The latest two
 calendar years' giver-to-recipient edges are excluded even if their history is
 still provisional. A draw can be drafted with incomplete history but cannot be
@@ -60,6 +86,11 @@ an explicitly reviewed retry. Issuing a new invitation replaces that person's
 previous invitation. A browser session lets them edit for 30 days; a fresh email
 sign-in works on another device or after the session expires.
 
+The standard People workflow uses invitations. The upgrade closes old group
+registration links and group entry sessions, while keeping saved submissions
+and their owner sessions. Pending owner submissions remain reviewable. The
+underlying group API remains for compatibility; its controls are no longer
+shown on People.
 Group registration is closed by default. An organizer can explicitly enable it
 for an open exchange; its random group link expires in 30 days. Anyone holding
 that link can submit a pending form without proving email ownership. Review their

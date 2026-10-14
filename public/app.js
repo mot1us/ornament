@@ -1,4 +1,4 @@
-import { privatePeoplePanel, personChecks, privateSubmissionReview, revealConfirmation, responsiveTable } from './organizer.js';
+import { privatePeoplePanel, personChecks, privateSubmissionReview, revealConfirmation, responsiveTable, invitationCandidates } from './organizer.js';
 import { matchingTestPanel } from './matching-test.js';
 const app=document.querySelector('#app');
 const dialog=document.querySelector('#dialog');
@@ -83,13 +83,20 @@ function renderAdmin() {
   const active=state.people.filter(p=>p.active),ready=active.filter(p=>p.validation.passed&&!p.changesRequested).length;
   const pending=(state.submissions||[]).filter(p=>p.status==='pending').length;
   const status={open:'Not drawn',drafted:'Draft',locked:'Finalized',archived:'Archived',no_exchange:'No exchange'}[e.state];
-  app.innerHTML=`<section class="dashboard"><div class="dash-heading"><h1>${esc(e.title)}</h1><div class="year-tools"><label class="sr-only" for="year-select">Year</label><select id="year-select">${state.exchanges.map(y=>`<option ${y.year===e.year?'selected':''}>${y.year}</option>`).join('')}</select><button data-action="new-year" class="secondary">+ Year</button></div></div><p class="dashboard-status">${active.length} people · ${ready}/${active.length} wish lists${pending?' · '+pending+' to review':''} · ${esc(status)}</p><nav class="tabs" aria-label="Organizer sections">${[['people','People'],['rules','Rules'],['draw','Draw'],['history','History'],['email','Email']].map(([key,label])=>`<button data-action="tab" data-tab="${key}" class="${tab===key?'selected':''}" aria-pressed="${tab===key}">${label}</button>`).join('')}</nav><div class="tab-content">${({people:peoplePanel,rules:rulesPanel,draw:drawPanel,history:historyPanel,email:emailPanel}[tab])()}</div></section>`;
+  app.innerHTML=`<section class="dashboard"><div class="dash-heading"><h1>${esc(e.title)}</h1><div class="year-tools"><label class="sr-only" for="year-select">Year</label><select id="year-select">${state.exchanges.map(y=>`<option ${y.year===e.year?'selected':''}>${y.year}</option>`).join('')}</select><button data-action="new-year" class="secondary">+ Year</button></div></div><p class="dashboard-status">${active.length} people · ${ready}/${active.length} wish lists${pending?' · '+pending+' to review':''} · ${esc(status)}</p><nav class="tabs" aria-label="Organizer sections">${[['people','People'],['rules','Rules'],['draw','Draw'],['history','History'],['email','Delivery']].map(([key,label])=>`<button data-action="tab" data-tab="${key}" class="${tab===key?'selected':''}" aria-pressed="${tab===key}">${label}</button>`).join('')}</nav><div class="tab-content">${({people:peoplePanel,rules:rulesPanel,draw:drawPanel,history:historyPanel,email:emailPanel}[tab])()}</div></section>`;
 }
 const isMutable=()=>['open','drafted'].includes(state.exchange.state);
 function peoplePanel() {return privatePeoplePanel(state);}
 function personForm(person={}) {
-  return `<h2>${person.id?'Edit '+esc(person.name):'Add person'}</h2><form data-form="person"><input type="hidden" name="id" value="${esc(person.id||'')}"><label>Name<input name="name" required maxlength="80" value="${esc(person.name||'')}"></label><label>Email<input type="email" name="email" value="${esc(person.email||'')}" placeholder="You can add this later"></label><label>Other names, separated by commas<input name="aliases" value="${esc((person.aliases||[]).join(', '))}" placeholder="A nickname or previous name"></label><label class="checkbox"><input type="checkbox" name="active" ${person.active===0?'':'checked'}>Taking part this year</label><button class="primary">Save person</button></form>`;
+  const current=state.people.some(p=>p.id===person.id),available=state.identities.filter(p=>!state.people.some(member=>member.id===p.id));
+  const title=person.id?(current?'Edit '+person.name:'Add '+person.name+' to '+state.year):'Add person to '+state.year;
+  return `<h2>${esc(title)}</h2>${!person.id&&available.length?`<label>Saved family member<select id="existing-member-select"><option value="">Add someone new</option>${available.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></label>`:''}<form data-form="person"><input type="hidden" name="year" value="${state.year}"><input type="hidden" name="id" value="${esc(person.id||'')}"><label>Name<input name="name" required maxlength="80" value="${esc(person.name||'')}"></label><div data-existing-person hidden></div><label>Email<input type="email" name="email" value="${esc(person.email||'')}" placeholder="You can add this later"></label><details class="person-aliases"><summary>Other names</summary><label>Nicknames or previous names, separated by commas<input name="aliases" value="${esc((person.aliases||[]).join(', '))}"></label></details><label class="checkbox"><input type="checkbox" name="active" ${person.active===0?'':'checked'}>Taking part in ${state.year}</label><button class="primary">${current?'Save changes':'Add person'}</button></form>`;
 }
+function invitationDialog() {
+  const people=invitationCandidates(state),preview=state.emailMode==='preview';
+  return `<h2>${preview?'Preview':'Send'} ${people.length} invitations?</h2><p>${preview?'Preview mode is on. No emails will leave the app.':'Each person below will receive a private link to fill out their wish list.'}</p><ul class="invitation-preview">${people.map(p=>`<li><strong>${esc(p.name)}</strong><span>${esc(p.email)}</span></li>`).join('')}</ul><form data-form="invite-people"><input type="hidden" name="year" value="${state.year}"><input type="hidden" name="recipients" value="${esc(JSON.stringify(people.map(p=>({id:p.id,email:p.email}))))}"><button class="primary">${preview?'Create invitation previews':'Send invitation emails'}</button></form>`;
+}
+
 function rulesPanel() {
   const e=state.exchange,disabled=isMutable()?'':'disabled';
   return `<div class="two-column"><section class="panel"><h2>Settings</h2><form data-form="settings"><fieldset ${disabled}><label>Exchange name<input name="title" value="${esc(e.title)}" required maxlength="100"></label><div class="form-row"><label>Gift budget<input name="budget" value="${esc(e.budget)}" placeholder="e.g. $50"></label><label>Exchange date<input name="event_date" value="${esc(e.event_date)}" placeholder="e.g. December 25"></label></div><label class="checkbox"><input type="checkbox" name="noReciprocal" ${e.no_reciprocal?'checked':''}>Prevent two people from drawing each other</label><p class="muted">Everyone gives once and receives once. Self-matches and giver → recipient repeats from the previous two years are always excluded.</p><button class="primary">Save details</button></fieldset></form></section><section class="panel"><h2>Exclusions</h2><p>Exclude partners or any specific pairing.</p><form data-form="exclusion"><fieldset ${disabled}><div class="form-row"><label>Giver<select name="giver">${options()}</select></label><label>Recipient<select name="recipient">${options()}</select></label></div><label class="checkbox"><input type="checkbox" name="bothDirections" checked>Exclude both directions</label><button class="secondary">Add exclusion</button></fieldset></form><ul class="exclusion-list">${state.exclusions.map(p=>`<li>${esc(personName(p.giver))} <span aria-hidden="true">→</span> ${esc(personName(p.recipient))}${isMutable()?`<button class="quiet" data-action="remove-exclusion" data-id="${p.giver}" data-recipient="${p.recipient}">Remove</button>`:''}</li>`).join('')||'<li class="muted">No extra exclusions yet.</li>'}</ul></section></div>`;
@@ -109,14 +116,15 @@ function historyForm() {
   return `<h2>Save a past year's matches</h2><p>The first name gave a gift to the second. One pairing per line.</p><form data-form="history"><label>Year<input name="year" type="number" min="2000" max="2200" required value="${archived?state.year:new Date().getFullYear()-1}"></label><label>Pairings<textarea name="pairs" rows="10" required placeholder="Alex → Jamie&#10;Jamie → Sam&#10;Sam → Alex">${archived?esc(state.assignments.map(p=>`${personName(p.giver)} → ${personName(p.recipient)}`).join('\n')):''}</textarea></label><label>Source or notes<input name="source" value="${archived?esc(state.exchange.source):''}" placeholder="e.g. Family recollection, waiting for confirmation"></label><label class="checkbox"><input type="checkbox" name="verified">The family has confirmed all these matches</label><button class="primary">Save history</button></form>`;
 }
 function emailPanel() {
-  return `<div class="section-heading"><div><h2>Email</h2><p>Prepare. Preview. Send.</p></div>${badge(state.emailMode==='preview'?'Preview mode':'SMTP mode',state.emailMode==='preview'?'amber':'green')}</div>${state.emailMode==='preview'?'<p class="callout">Preview mode is on. Messages are stored here, and no emails leave the app.</p>':!state.smtpReady?'<p class="callout">SMTP is not configured. Add the server email settings before sending.</p>':''}<div class="email-actions"><button class="secondary" data-action="prepare-invites" ${state.exchange.state==='archived'?'disabled':''}>Prepare wish-list invitations</button><button class="secondary" data-action="prepare-matches" ${state.exchange.state==='locked'?'':'disabled'}>Prepare assignment emails</button><button class="primary" data-action="send" ${state.outbox.some(p=>p.status==='pending'&&!p.kind.startsWith('signin:'))?'':'disabled'}>${state.emailMode==='preview'?'Mark pending messages as previewed':'Send pending emails'}</button></div>${state.outbox.length?responsiveTable(['To','Message','Status','Actions'],state.outbox.map(mail=>[
+  return `<div class="section-heading"><div><h2>Delivery</h2><p>Invitation and match email records.</p></div>${badge(state.emailMode==='preview'?'Preview mode':'SMTP mode',state.emailMode==='preview'?'amber':'green')}</div>${state.emailMode==='preview'?'<p class="callout">Preview mode is on. Messages are stored here, and no emails leave the app.</p>':!state.smtpReady?'<p class="callout">SMTP is not configured. Add the server email settings before sending.</p>':''}<div class="email-actions"><button class="secondary" data-action="prepare-matches" ${state.exchange.state==='locked'?'':'disabled'}>Prepare assignment emails</button><button class="primary" data-action="send" ${state.outbox.some(p=>p.status==='pending'&&!p.kind.startsWith('signin:'))?'':'disabled'}>${state.emailMode==='preview'?'Mark pending messages as previewed':'Send pending emails'}</button></div>${state.outbox.length?responsiveTable(['To','Message','Status','Actions'],state.outbox.map(mail=>[
     `<strong>${esc(personName(mail.giver))}</strong><small class="block muted">${esc(mail.recipient_email)}</small>`,
     `${mail.kind.startsWith('signin:')?'Sign-in link':mail.kind==='invite'?'Wish-list invitation':mail.kind.startsWith('revision:')?'Update request':'Assignment'}${mail.error?`<small class="block inline-error">${esc(mail.error)}</small>`:''}`,
     badge(mail.status,mail.status==='sent'?'green':['failed','uncertain'].includes(mail.status)?'amber':''),
     `<button class="quiet" data-action="preview-email" data-id="${mail.id}">Reveal preview</button>${!mail.kind.startsWith('signin:')&&['failed','preview','uncertain'].includes(mail.status)?`<button class="quiet" data-action="retry-email" data-id="${mail.id}">${mail.status==='preview'?'Queue for sending':'Review & retry'}</button>`:''}`
-  ]),'Email delivery'):'<div class="empty">No messages prepared yet. Start with wish-list invitations.</div>'}<p class="section-note">“Sent” means your mail server accepted the message. It does not guarantee delivery to the inbox. An interrupted send is marked uncertain and requires review before retrying.</p>`;
+  ]),'Email delivery'):'<div class="empty">No messages yet. Send invitations from People.</div>'}<p class="section-note">“Sent” means your mail server accepted the message. It does not guarantee delivery to the inbox. An interrupted send is marked uncertain and requires review before retrying.</p>`;
 }
-function newYearForm() {return `<form data-form="new-year"><label>Year<input name="year" type="number" min="2000" max="2200" value="${state?.year?state.year+1:new Date().getFullYear()}" required></label>${state?.exchanges.length?`<label>Copy participants from<select name="copyFrom"><option value="">Start empty</option>${state.exchanges.map(e=>`<option value="${e.year}" ${e.year===state.year?'selected':''}>${e.year}</option>`).join('')}</select></label><p class="muted">Wish lists and exclusions start fresh each year.</p>`:''}<button class="primary">Create exchange</button></form>`;}
+function newYearForm() {return `<form data-form="new-year"><label>Year<input name="year" type="number" min="2000" max="2200" value="${state?.year?state.year+1:new Date().getFullYear()}" required></label><p class="muted">Family members carry over automatically. Wish lists and exclusions start fresh. You can include or leave people out afterward.</p><button class="primary">Create exchange</button></form>`;}
+
 
 function giftRow(gift={},index=0) {
   return `<div class="gift-entry" data-gift-row><span class="gift-doodle" aria-hidden="true">✧</span><div class="gift-entry-fields"><label>Gift idea<input name="gift-label-${index}" maxlength="160" value="${esc(gift.label||'')}" placeholder="e.g. A cozy scarf"></label><label>Product link <span class="optional">optional</span><input name="gift-url-${index}" type="url" maxlength="2000" value="${esc(gift.url||'')}" placeholder="https://…" aria-describedby="gift-link-hint-${index}"></label><small class="field-hint" id="gift-link-hint-${index}">Start the link with https://</small></div><button type="button" class="remove-gift" data-action="remove-gift" aria-label="Remove gift idea">×</button></div>`;
@@ -169,6 +177,17 @@ function renderFamily() {if(session?.role==='member')renderMember();else renderG
 function formGifts(form) {
   return [...form.querySelectorAll('[data-gift-row]')].map(row=>({label:row.querySelector('input[name^="gift-label-"]').value.trim(),url:row.querySelector('input[name^="gift-url-"]').value.trim()})).filter(g=>g.label||g.url);
 }
+document.addEventListener('input',event=>{
+  const form=event.target.closest('[data-form="person"]');
+  if(!form || event.target.name!=='name' || form.elements.id.value)return;
+  const key=event.target.value.trim().toLocaleLowerCase('en-US');
+  const existing=state.identities.find(p=>[p.name,...p.aliases].some(name=>name.trim().toLocaleLowerCase('en-US')===key));
+  const hint=form.querySelector('[data-existing-person]');hint.hidden=!existing;
+  hint.innerHTML=existing?`<p>This person is already saved. Use their existing entry to keep their history.</p><button type="button" class="secondary" data-action="use-person" data-id="${esc(existing.id)}">Use ${esc(existing.name)}’s entry</button>`:'';
+});
+document.addEventListener('change',event=>{
+  if(event.target.id==='existing-member-select'&&event.target.value)showDialog(personForm(state.identities.find(p=>p.id===event.target.value)));
+});
 app.addEventListener('input',event=>{
   if(!event.target.closest('.wishlist-form'))return;
   event.target.removeAttribute('aria-invalid');
@@ -208,6 +227,10 @@ document.addEventListener('click',async event=>{
     }
     if(action==='tab'){tab=button.dataset.tab;renderAdmin();return;}
     if(action==='new-year'){showDialog('<h2>New year</h2>'+newYearForm());return;}
+    if(action==='use-person'){showDialog(personForm(state.people.find(p=>p.id===id)||state.identities.find(p=>p.id===id)));return;}
+    if(action==='invite-people'){showDialog(invitationDialog());return;}
+    if(action==='remove-person'){showDialog(`<h2>Leave ${esc(personName(id))} out of ${state.year}?</h2><p>They will not be included in this year’s draw or invitation batch. Their saved list and past history are kept.</p><form data-form="participation"><input type="hidden" name="year" value="${state.year}"><input type="hidden" name="id" value="${esc(id)}"><input type="hidden" name="active" value="false"><button class="primary">Leave out this year</button></form>`);return;}
+
     if(action==='add-person'||action==='edit-person'){showDialog(personForm(state.people.find(p=>p.id===id)));return;}
     if(action==='review-submission'){showDialog(submissionReview(state.submissions.find(p=>p.id===id)));return;}
     if(action==='group-revoke'){showDialog('<h2>Close the group link?</h2><p>The shared link will stop accepting new people. Saved wish lists stay available to their owners.</p><form data-form="group-revoke"><button class="primary">Revoke group link</button></form>');return;}
@@ -243,6 +266,7 @@ document.addEventListener('click',async event=>{
     if(action==='share'){const data=await api('/admin/group-link',{year:state.year});showDialog(`<h2>One link for everyone</h2><p>Share this in your family chat. Everyone can fill out their own form.</p><label>Group link<input id="shared-link" readonly value="${esc(data.link)}"></label><button class="primary" data-action="copy-link">Copy link</button>`);return;}
     if(action==='link'){const data=await api('/admin/link',{year:state.year,personId:id});showDialog(`<h2>${esc(personName(id))}'s private link</h2><p>Share this only with ${esc(personName(id))}. It works once, expires in 48 hours, and replaces their previous invitation link.</p><label>Personal link<input readonly value="${esc(data.link)}"></label>`);return;}
     if(action==='reject-submission'){await api('/admin/submissions/reject',{id});dialog.close();}
+    if(action==='include-person')await api('/admin/participation',{year:state.year,id,active:true});
     if(action==='draft')await api('/admin/draft',{year:state.year});
     if(action==='remove-exclusion')await api('/admin/exclusions',{year:state.year,giver:id,recipient:button.dataset.recipient,remove:true});
     if(action==='confirm-history')await api('/admin/history/confirm',{year:state.year});
@@ -277,7 +301,14 @@ document.addEventListener('submit',async event=>{
       showDialog(`<h2>${esc(data.name)}’s wish list</h2>${data.wishlist?`<p class="wishlist-text">${esc(data.wishlist)}</p>`:''}${giftLinks(data.gifts)}${data.message?`<h3>Message to their gifter</h3><p class="wishlist-text">${esc(data.message)}</p>`:''}`);return;
     }
     if(type==='login'){session=await api('/login',{password:values.password});document.querySelector('#logout').hidden=false;await loadAdmin();return;}
-    if(type==='person')await api('/admin/people',{...values,id:values.id||undefined,year:state.year,active:form.elements.active.checked,aliases:values.aliases.split(',').map(s=>s.trim()).filter(Boolean)});
+    if(type==='person')await api('/admin/people',{...values,id:values.id||undefined,year:Number(values.year),active:form.elements.active.checked,aliases:values.aliases.split(',').map(s=>s.trim()).filter(Boolean)});
+    if(type==='participation')await api('/admin/participation',{year:Number(values.year),id:values.id,active:values.active==='true'});
+    if(type==='invite-people'){
+      const result=await api('/admin/invitations/send',{year:Number(values.year),confirm:'SEND',recipients:JSON.parse(values.recipients)});
+      dialog.close();await loadAdmin();
+      const issues=result.counts.failed+result.counts.uncertain;
+      notice(issues?`${result.counts.sent} invitations sent; ${issues} delivery issues. Review Delivery.`:state.emailMode==='preview'?`${result.counts.preview} invitation previews created. No emails sent.`:`${result.counts.sent} invitation emails sent.`,!!issues);return;
+    }
     if(type==='contact')await api('/admin/contact',{...values,year:state.year});
     if(type==='settings')await api('/admin/settings',{...values,year:state.year,noReciprocal:form.elements.noReciprocal.checked});
     if(type==='exclusion')await api('/admin/exclusions',{...values,year:state.year,bothDirections:form.elements.bothDirections.checked});

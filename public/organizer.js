@@ -10,20 +10,30 @@ export function checkSummary(p) {
 export function validationDetails(validation) {
   return `<ul class="validation-checks">${validation.checks.map(c=>`<li><span aria-hidden="true">${c.passed?'✓':'!'}</span>${esc(c.label)} ${badge(c.passed?'Passed':'Needs attention',c.passed?'green':'amber')}</li>`).join('')}</ul><p class="section-note">Format checks only. Product availability and personal suitability are not checked.</p>`;
 }
-export function privatePeoplePanel(state) {
-  const mutable=['open','drafted'].includes(state.exchange.state),open=state.exchange.allow_group_join;
-  const pending=state.submissions.filter(p=>p.status==='pending');
-  return `<div class="section-heading"><div><h2>People</h2><p>Add members, then email their invitations.</p></div>${mutable?'<button class="primary" data-action="add-person">+ Add person</button>':''}</div>
-    <p class="privacy-note"><span aria-hidden="true">✉</span> Wish lists and messages stay hidden until you choose to reveal them.</p>
-    ${state.people.length?responsiveTable(['Person','Email','Wish list','Taking part','Actions'],state.people.map(p=>[
-      `<div class="person"><strong>${esc(p.name)}</strong></div>`,
-      p.email?esc(p.email):'<span class="muted">Email needed</span>',
-      checkSummary(p),badge(p.active?'Yes':'Sitting out',p.active?'green':''),
-      `<button class="secondary" data-action="wishlist-status" data-id="${esc(p.id)}">Checks &amp; options</button>${mutable?`<button class="quiet" data-action="edit-person" data-id="${esc(p.id)}">Edit member</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${esc(p.id)}">Update email</button>`:''}`
-    ]),'Family members'):'<div class="empty">Add family members and their email addresses to get started.</div>'}
-    ${pending.length?`<section class="submission-review"><div class="section-heading"><div><h2>Existing submissions ${badge(pending.length,'amber')}</h2><p>Review the identity and checks without opening the wish list.</p></div></div><ul class="submission-list">${pending.map(p=>`<li><div><strong>${esc(p.name)}</strong><small class="block muted">${esc(p.email)}</small>${checkSummary(p)}</div><button class="secondary" data-action="review-submission" data-id="${esc(p.id)}" ${mutable?'':'disabled'}>Review checks</button></li>`).join('')}</ul></section>`:''}
-    ${mutable?`<details class="registration-options"><summary>Group registration ${badge(open?'Open':'Closed',open?'amber':'')}</summary><p>Optional: anyone with the group link can submit a list for review. Known-member invitations are the default.</p><button class="secondary" data-action="group-settings">${open?'Close group registration':'Enable group registration'}</button>${open?'<button class="secondary" data-action="share">Group link</button><button class="quiet" data-action="group-revoke">Revoke group link</button>':''}</details>`:''}`;
+export function invitationCandidates(state) {
+  return state.people.filter(p=>p.active&&!p.validation.submitted&&['pending','preview','cancelled','new'].includes(state.outbox.find(m=>m.kind==='invite'&&m.giver===p.id)?.status||'new'));
 }
+export function privatePeoplePanel(state) {
+  const mutable=['open','drafted'].includes(state.exchange.state);
+  const pending=state.submissions.filter(p=>p.status==='pending'),active=state.people.filter(p=>p.active),inactive=state.people.filter(p=>!p.active);
+  const candidates=invitationCandidates(state),missingEmail=candidates.filter(p=>!p.validation.checks.find(c=>c.key==='email')?.passed).length;
+  const table=people=>responsiveTable(['Person','Email','Invitation','Wish list','Actions'],people.map(p=>{
+    const mail=state.outbox.find(m=>m.kind==='invite'&&m.giver===p.id);
+    const invitation=p.validation.submitted?'List received':({sent:'Invited',preview:'Preview only',pending:'Waiting to send',failed:'Delivery failed',uncertain:'Check delivery',sending:'Sending',cancelled:'Not invited'}[mail?.status]||'Not invited');
+    const list=p.changesRequested?'Update requested':p.validation.passed?'Submitted':p.validation.submitted?'Needs attention':'Not submitted';
+    return [`<strong>${esc(p.name)}</strong>`,p.email?esc(p.email):'<span class="muted">Email needed</span>',badge(invitation,mail?.status==='sent'?'green':['failed','uncertain'].includes(mail?.status)?'amber':''),
+      `<button class="quiet" data-action="wishlist-status" data-id="${esc(p.id)}">${esc(list)}</button>`,
+      mutable?`<button class="secondary" data-action="edit-person" data-id="${esc(p.id)}">Edit</button><button class="quiet" data-action="${p.active?'remove-person':'include-person'}" data-id="${esc(p.id)}">${p.active?'Leave out':'Include'}</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${esc(p.id)}">Update email</button>`:''
+    ];
+  }),'Family members');
+  return `<div class="section-heading"><div><h2>People for ${esc(state.year)}</h2><p>Add people, send invitations, then watch their lists arrive.</p></div>${mutable?'<div class="people-actions"><button class="primary" data-action="invite-people" '+(!candidates.length||missingEmail?'disabled':'')+'>Send invitations</button><button class="secondary" data-action="add-person">+ Add person</button></div>':''}</div>
+    ${mutable&&missingEmail?`<p class="callout">Add email addresses for ${missingEmail} ${missingEmail===1?'person':'people'} before sending invitations.</p>`:''}
+    <p class="privacy-note"><span aria-hidden="true">✉</span> You can see who submitted. Wish lists and messages stay hidden until you choose to reveal them.</p>
+    ${active.length?table(active):'<div class="empty">Add or include family members to get started.</div>'}
+    ${inactive.length?`<details class="inactive-people"><summary>Not taking part in ${esc(state.year)} · ${inactive.length}</summary>${table(inactive)}</details>`:''}
+    ${pending.length?`<section class="submission-review"><div class="section-heading"><div><h2>Earlier submissions ${badge(pending.length,'amber')}</h2><p>Review these saved submissions to add their lists to the roster.</p></div></div><ul class="submission-list">${pending.map(p=>`<li><div><strong>${esc(p.name)}</strong><small class="block muted">${esc(p.email)}</small>${checkSummary(p)}</div><button class="secondary" data-action="review-submission" data-id="${esc(p.id)}" ${mutable?'':'disabled'}>Review checks</button></li>`).join('')}</ul></section>`:''}`;
+}
+
 export function personChecks(p,state) {
   return `<h2>${esc(p.name)}’s wish-list checks</h2>${checkSummary(p)}${validationDetails(p.validation)}${p.changesRequested?`<p class="callout">Your request: ${esc(p.changesRequested)}</p>`:''}<div class="review-actions"><button class="secondary" data-action="confirm-wishlist-reveal" data-id="${esc(p.id)}">Reveal wish list</button>${p.active&&state.exchange.state!=='archived'?`<button class="secondary" data-action="request-changes" data-id="${esc(p.id)}">Request changes</button><button class="quiet" data-action="link" data-id="${esc(p.id)}">Create invitation link</button><button class="quiet" data-action="revoke" data-id="${esc(p.id)}">Revoke access</button>`:''}</div>`;
 }

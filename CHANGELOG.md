@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+- Carry the previous family roster into new years automatically and repair missing members in existing open exchanges once, preserving submitted lists and finalized history.
+- Simplify People around adding members, reviewing invitation recipients, sending invitation-only batches, and seeing submitted/waiting status. Support leaving people out and including them again without deleting identities or history.
+- Reuse saved people from Add person, keep past names in an optional field, and move invitation preparation out of the delivery-record view. Close old group entry links while preserving saved submissions, hidden wish lists, explicit reveals, and reviewed retry handling.
+
 ## 0.7.0
 
 - Add a private organizer matching tester: check up to 100 temporary draws against the active roster, exclusions, and two-year history without saving or revealing pairings or sending mail.

@@ -322,6 +322,14 @@ dialog[open]::backdrop { animation: page-arrive 180ms both; }
 .validation-checks{list-style:none;padding:0;margin:1.5rem 0}.validation-checks li{display:flex;align-items:center;gap:.6rem;padding:.65rem 0;border-bottom:1px solid var(--line,#ddd)}.validation-checks .badge{margin-left:auto}
 .registration-options{margin-top:2rem;padding:1rem;border:1px solid var(--line,#ddd);border-radius:12px}.registration-options summary{cursor:pointer}.registration-options button{margin:.4rem .4rem .4rem 0}
 .private-draw{text-align:center}.private-draw p{max-width:42rem;margin:1rem auto}
+.people-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.inactive-people { margin-top: 24px; }
+.person-aliases { margin-bottom: 16px; }
+[data-existing-person] { margin-bottom: 20px; padding: 12px; background: var(--green-light); border-radius: 8px; }
+[data-existing-person] p { margin-top: 0; }
+.invitation-preview { list-style: none; padding: 0; }
+.invitation-preview li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.invitation-preview span { display: block; overflow-wrap: anywhere; color: var(--muted); }
 .matching-test { margin-bottom: 28px; }
 .matching-test .section-heading { align-items: flex-start; }
 .matching-test .section-heading p { max-width: 540px; margin-bottom: 0; font-size: .85rem; }

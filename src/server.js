@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { openDatabase, audit, getExchange, members, transaction, importHistory } from './database.js';
 import { createExchange, savePerson, emailValid, matchingOptions, historyReadiness, mutable, invalidateDraft, draftDraw,
-  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest } from './service.js';
+  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest, setParticipation, prepareInvitations } from './service.js';
 import { secret, hash, passwordMatches, readConfig } from './security.js';
 import { createMailer } from './mail.js';
 import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
@@ -137,7 +137,7 @@ export function createApp(config,db,providedTransport) {
     const exchange = exchanges.find(e=>e.year===year) || null;
     const people = exchange ? members(db,year).map(p=>({id:p.id,name:p.name,email:p.email,aliases:p.aliases,active:p.active,
       validation:validateWishlist(p,p.email),changesRequested:p.changes_requested})) : [];
-    res.json({exchanges,year,exchange,people,identities:db.prepare('SELECT id,name FROM people ORDER BY name COLLATE NOCASE').all(),submissions:exchange?listSubmissions(db,year):[],
+    res.json({exchanges,year,exchange,people,identities:db.prepare('SELECT id,name,email,aliases FROM people ORDER BY name COLLATE NOCASE').all().map(p=>({...p,aliases:JSON.parse(p.aliases)})),submissions:exchange?listSubmissions(db,year):[],
       exclusions:exchange ? matchingOptions(db,year).exclusions : [],
       assignments:exchange?.state==='archived' ? db.prepare('SELECT giver,recipient FROM assignments WHERE year=?').all(year) : [],
       draw:exchange?drawStatus(year):null,
@@ -231,6 +231,22 @@ export function createApp(config,db,providedTransport) {
     });res.json({ok:true});
   });
   app.post('/api/admin/people',(req,res)=>{res.json({id:savePerson(db,Number(req.body.year),req.body)});});
+  app.post('/api/admin/participation',(req,res)=>{
+    if(typeof req.body.active!=='boolean')throw new Error('Choose whether this person is taking part.');
+    setParticipation(db,Number(req.body.year),req.body.id,req.body.active);res.json({ok:true});
+  });
+  app.post('/api/admin/invitations/send',async(req,res)=>{
+    if(req.body.confirm!=='SEND')throw new Error('Confirm sending invitations.');
+    if(config.emailMode==='smtp'&&!mailer.ready)throw new Error('Configure SMTP before sending invitation emails.');
+    const year=Number(req.body.year),ids=prepareInvitations(db,config,year,req.body.recipients);
+    if(ids.length)await mailer.deliver(year,{kind:'invite',ids});
+    const counts={sent:0,preview:0,failed:0,uncertain:0};
+    for(const id of ids) {
+      const row=db.prepare("SELECT status FROM outbox WHERE year=? AND giver=? AND kind='invite'").get(year,id);
+      if(row?.status in counts)counts[row.status]++;
+    }
+    res.json({count:ids.length,counts});
+  });
   app.post('/api/admin/contact',(req,res)=>{
     const year=Number(req.body.year),id=req.body.id,email=normalizeEmail(req.body.email);
     if(!emailValid(email)||!db.prepare('SELECT person_id FROM enrollments WHERE year=? AND person_id=?').get(year,id))throw new Error('Choose an existing person and enter a valid email address.');

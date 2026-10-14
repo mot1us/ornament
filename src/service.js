@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { audit, ensureYear, getExchange, members, findPerson, transaction } from './database.js';
+import { audit, ensureYear, getExchange, members, findPerson, transaction, carryRoster } from './database.js';
 import { generateDraw, validateDraw } from './matching.js';
 import { hash, secret } from './security.js';
 import { validateWishlist } from './validation.js';
@@ -18,6 +18,9 @@ export function checkEmailIdentity(db,email,id) {
   }
 }
 const short = (value, limit) => String(value ?? '').trim().slice(0, limit);
+function cancelUnsentInvitation(db,year,id) {
+  db.prepare("UPDATE outbox SET status='cancelled',error='This person is not taking part this year.' WHERE year=? AND giver=? AND kind='invite' AND status IN ('pending','preview','failed')").run(year,id);
+}
 export function giftList(input) {
   if (!Array.isArray(input) || input.length > 5) throw new Error('Add up to five gift ideas.');
   return input.map(gift => {
@@ -49,14 +52,9 @@ export function createExchange(db, year, copyFrom) {
   if (db.prepare('SELECT year FROM exchanges WHERE year=?').get(year)) throw new Error('That year already exists.');
   return transaction(db, () => {
     ensureYear(db, year);
-    if (copyFrom) {
-      getExchange(db, copyFrom);
-      // Keep identities, but start with fresh wish lists and no exclusions.
-      for (const person of members(db,copyFrom)) {
-        db.prepare('INSERT INTO enrollments(year,person_id,active) VALUES (?,?,?)').run(year,person.id,person.active);
-      }
-    }
-    audit(db,'create-exchange',{year,copyFrom});
+    if (copyFrom)getExchange(db,copyFrom);
+    const rollover=carryRoster(db,year,copyFrom);
+    audit(db,'create-exchange',{year,copyFrom:rollover.sourceYear});
     return getExchange(db,year);
   });
 }
@@ -83,6 +81,7 @@ export function savePerson(db, year, input) {
     db.prepare('DELETE FROM sign_in_tokens WHERE person_id=? AND email<>?').run(id,email);
     db.prepare('INSERT OR IGNORE INTO enrollments(year,person_id) VALUES (?,?)').run(year,id);
     db.prepare('UPDATE enrollments SET active=? WHERE year=? AND person_id=?').run(input.active === false ? 0 : 1,year,id);
+    if(input.active===false)cancelUnsentInvitation(db,year,id);
     invalidateDraft(db,year);
     audit(db,'save-person',{year,id});
     return id;
@@ -119,6 +118,41 @@ export function matchingTest(db,year) {
   getExchange(db,year);
   const people=members(db,year).filter(p=>p.active).map(p=>p.id);
   return {...testMatchmaking(people,matchingOptions(db,year)),year,history:historyReadiness(db,year)};
+}
+
+export function setParticipation(db,year,id,active) {
+  mutable(db,year);
+  if(!db.prepare('SELECT person_id FROM enrollments WHERE year=? AND person_id=?').get(year,id))throw new Error('Choose someone in this year’s roster.');
+  transaction(db,()=>{
+    db.prepare('UPDATE enrollments SET active=? WHERE year=? AND person_id=?').run(active?1:0,year,id);
+    if(!active)cancelUnsentInvitation(db,year,id);
+    invalidateDraft(db,year);audit(db,'set-participation',{year,id,active});
+  });
+}
+
+export function invitationRecipients(db,year) {
+  return members(db,year).filter(person=>{
+    if(!person.active || validateWishlist(person,person.email).submitted)return false;
+    const mail=db.prepare("SELECT status FROM outbox WHERE year=? AND giver=? AND kind='invite'").get(year,person.id);
+    return !mail || ['pending','preview','cancelled'].includes(mail.status);
+  });
+}
+
+export function prepareInvitations(db,config,year,recipients) {
+  mutable(db,year);
+  const waiting=invitationRecipients(db,year);
+  if(!Array.isArray(recipients)||!recipients.length||recipients.length>50||new Set(recipients.map(p=>p?.id)).size!==recipients.length)throw new Error('Review the invitation recipients before sending.');
+  const people=recipients.map(recipient=>{
+    const person=waiting.find(p=>p.id===recipient?.id);
+    if(!person || normalizeEmail(recipient.email)!==normalizeEmail(person.email))throw new Error('The roster or invitation status changed. Review the recipients again.');
+    return person;
+  }),ids=people.map(p=>p.id);
+  if(people.some(p=>!emailValid(p.email)))throw new Error('Add a valid email address for everyone waiting for an invitation.');
+  prepareMail(db,config,year,'invite',ids);
+  transaction(db,()=>{
+    for(const id of ids)db.prepare("UPDATE outbox SET status='pending',error='' WHERE year=? AND giver=? AND kind='invite' AND status IN ('preview','cancelled')").run(year,id);
+  });
+  return ids;
 }
 
 export function lockDraw(db,year) {

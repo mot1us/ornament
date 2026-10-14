@@ -50,12 +50,13 @@ export function createMailer(db,config,providedTransport) {
       const row=db.prepare("SELECT * FROM outbox WHERE id=? AND kind LIKE 'signin:%' AND status='pending'").get(id);
       if (row) await deliverRow(row);
     },
-    async deliver(year) {
+    async deliver(year,{kind,ids}={}) {
       if (busy) throw new Error('An email batch is already running.');
       if (config.emailMode === 'smtp' && !transport) throw new Error('Configure SMTP before sending real email.');
       busy = true;
       try {
-        const rows = db.prepare("SELECT * FROM outbox WHERE year=? AND status='pending' AND (kind IN ('invite','assignment') OR kind LIKE 'revision:%') ORDER BY id").all(year);
+        const rows = db.prepare("SELECT * FROM outbox WHERE year=? AND status='pending' AND (kind IN ('invite','assignment') OR kind LIKE 'revision:%') ORDER BY id").all(year)
+          .filter(row=>(!kind||row.kind===kind)&&(!ids||ids.includes(row.giver)));
         for (const row of rows) {
           await deliverRow(row);
         }

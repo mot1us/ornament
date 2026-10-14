@@ -60,6 +60,7 @@ export function openDatabase(dataDir) {
       id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, detail TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );`);
+  db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
   if (!db.prepare('PRAGMA table_info(enrollments)').all().some(column=>column.name==='message')) {
     db.exec("ALTER TABLE enrollments ADD COLUMN message TEXT NOT NULL DEFAULT ''");
   }
@@ -83,7 +84,31 @@ export function openDatabase(dataDir) {
   db.exec('CREATE TABLE IF NOT EXISTS sign_in_events (created_at INTEGER NOT NULL)');
   // An interrupted SMTP transaction may have succeeded. Never automatically resend it.
   db.prepare("UPDATE outbox SET status='uncertain', error='Sending was interrupted. Check the recipient mailbox before retrying.' WHERE status='sending'").run();
+  if(!db.prepare('SELECT name FROM schema_migrations WHERE name=?').get('automatic-roster-v1')) {
+    transaction(db,()=>{
+      db.prepare("UPDATE exchanges SET allow_group_join=0 WHERE state IN ('open','drafted')").run();
+      db.exec("DELETE FROM group_tokens; DELETE FROM sessions WHERE role='group'");
+      for(const exchange of db.prepare("SELECT year,state FROM exchanges WHERE state IN ('open','drafted') ORDER BY year").all()) {
+        const result=carryRoster(db,exchange.year);
+        if(result.count) {
+          if(exchange.state==='drafted') {
+            db.prepare('DELETE FROM assignments WHERE year=?').run(exchange.year);
+            db.prepare("UPDATE exchanges SET state='open' WHERE year=?").run(exchange.year);
+          }
+          audit(db,'carry-roster',{year:exchange.year,...result});
+        }
+      }
+      db.prepare('INSERT INTO schema_migrations(name) VALUES (?)').run('automatic-roster-v1');
+    });
+  }
   return db;
+}
+
+export function carryRoster(db,year,sourceYear) {
+  sourceYear=sourceYear || db.prepare('SELECT max(year) AS year FROM enrollments WHERE year<?').get(year).year;
+  if(!sourceYear)return {sourceYear:null,count:0};
+  const result=db.prepare('INSERT OR IGNORE INTO enrollments(year,person_id,active) SELECT ?,person_id,active FROM enrollments WHERE year=?').run(year,sourceYear);
+  return {sourceYear,count:result.changes};
 }
 
 export function transaction(db, fn) {

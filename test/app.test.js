@@ -89,6 +89,66 @@ test('organizer login, CSRF, and origin restrictions protect private admin data'
   assert.equal((await call('/login',{password:'wrong'})).status,401);
   assert.equal((await call('/admin/exchanges',{year:2026},admin)).status,200);
 });
+
+test('reviewed invitation dispatch sends only selected waiting members and preserves other delivery records',async t=>{
+  const sent=[],transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+  const people=members(db,2026);
+  for(const p of people.slice(0,6))db.prepare("UPDATE enrollments SET wishlist='' WHERE year=2026 AND person_id=?").run(p.id);
+  for(const [i,status] of [[2,'failed'],[3,'uncertain'],[4,'sent'],[5,'pending']])db.prepare('INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body,status) VALUES (?,2026,?,\'invite\',?,\'Test\',\'Private test body\',?)').run(`existing-invite-${i}`,people[i].id,people[i].email,status);
+  for(const [kind,id] of [['assignment','queued-assignment'],['revision:test','queued-revision']])db.prepare("INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body) VALUES (?,2026,?,?,?,'Test','Private other message')").run(id,people[6].id,kind,people[6].email);
+  prepareSignIn(db,config,people[7].email);
+  const before=db.prepare('SELECT * FROM outbox ORDER BY id').all();
+  const recipients=people.slice(0,2).map(p=>({id:p.id,email:p.email}));
+  const response=await call('/admin/invitations/send',{year:2026,confirm:'SEND',recipients},admin);
+  assert.equal(response.status,200);assert.equal(response.data.count,2);assert.equal(response.data.counts.sent,2);
+  assert.deepEqual(sent.map(m=>m.to).sort(),recipients.map(p=>p.email).sort());
+  for(const row of before)assert.deepEqual(db.prepare('SELECT * FROM outbox WHERE id=?').get(row.id),row);
+  for(const p of people.slice(0,2)) {
+    const mail=db.prepare("SELECT * FROM outbox WHERE year=2026 AND giver=? AND kind='invite'").get(p.id);
+    assert.equal(mail.status,'sent');assert.ok(mail.body.includes('/join#'));
+    assert.ok(db.prepare('SELECT expires FROM invite_tokens WHERE year=2026 AND person_id=?').get(p.id).expires>Date.now()+47*3600000);
+  }
+  assert.equal((await call('/admin/invitations/send',{year:2026,confirm:'SEND',recipients},admin)).status,400);
+  assert.equal(sent.length,2);
+});
+
+test('invitation dispatch requires recipient review and blocks changed addresses, submitted or inactive members',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db);
+  const person=members(db,2026)[0];db.prepare("UPDATE enrollments SET wishlist='' WHERE year=2026 AND person_id=?").run(person.id);
+  const body={year:2026,confirm:'SEND',recipients:[{id:person.id,email:person.email}]};
+  assert.equal((await call('/admin/invitations/send',body)).status,403);
+  assert.equal((await call('/admin/invitations/send',body,{...admin,csrf:'wrong'})).status,403);
+  assert.equal((await call('/admin/invitations/send',{...body,confirm:''},admin)).status,400);
+  assert.equal((await call('/admin/invitations/send',{...body,recipients:undefined},admin)).status,400);
+  assert.equal((await call('/admin/invitations/send',{...body,recipients:[{id:person.id,email:'changed@example.test'}]},admin)).status,400);
+  const completed=members(db,2026)[1];
+  assert.equal((await call('/admin/invitations/send',{...body,recipients:[{id:completed.id,email:completed.email}]},admin)).status,400);
+  assert.equal((await call('/admin/participation',{year:2026,id:person.id,active:false},admin)).status,200);
+  assert.equal((await call('/admin/invitations/send',body,admin)).status,400);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM outbox').get().n,0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM invite_tokens').get().n,0);
+});
+
+test('the simple invitation flow previews without sending, and member submission updates private organizer status',async t=>{
+  let sends=0;const transport={async sendMail(){sends++;throw new Error('Preview mode must not call SMTP.');}};
+  const {db,config,call,admin}=await fixture(t,{transport});seed(db);
+  const person=members(db,2026)[0];db.prepare("UPDATE enrollments SET wishlist='' WHERE year=2026 AND person_id=?").run(person.id);
+  const recipients=[{id:person.id,email:person.email}];
+  const result=await call('/admin/invitations/send',{year:2026,confirm:'SEND',recipients},admin);
+  assert.equal(result.status,200);assert.equal(result.data.counts.preview,1);assert.equal(sends,0);
+  let state=(await call('/admin/state?year=2026',undefined,admin)).data;
+  assert.equal(state.people.find(p=>p.id===person.id).validation.submitted,false);
+  const mail=db.prepare("SELECT body FROM outbox WHERE year=2026 AND giver=? AND kind='invite'").get(person.id);
+  const link=mail.body.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0];
+  const owner=authFrom(await call('/redeem',{token:new URL(link).hash.slice(1)}));
+  assert.equal((await call('/member/profile',{wishlist:'Private new list',message:'Private note',gifts:[]},owner)).status,200);
+  state=(await call('/admin/state?year=2026',undefined,admin)).data;
+  assert.equal(state.people.find(p=>p.id===person.id).validation.submitted,true);
+  assert.equal(JSON.stringify(state).includes('Private new list'),false);assert.equal(JSON.stringify(state).includes('Private note'),false);
+  assert.equal((await call('/admin/invitations/send',{year:2026,confirm:'SEND',recipients},admin)).status,400);
+  assert.equal(sends,0);
+});
 test('artwork caching does not cache authenticated profiles or organizer data',async t=>{
   const {db,config,call,admin}=await fixture(t);seed(db);
   const artwork=readdirSync(new URL('../public/',import.meta.url)).filter(name=>name.endsWith('.webp'));
@@ -342,7 +402,8 @@ test('a complete exchange goes from shared submissions to reviewed identities, r
   }
   assert.equal((await call('/admin/exchanges',{year:2026},admin)).status,200);
   let state=(await call('/admin/state?year=2026',undefined,admin)).data;
-  assert.equal(state.people.length,0);
+  assert.equal(state.people.length,10);
+  assert.ok(state.people.every(p=>!p.validation.submitted));
   const identities=state.identities;
   const {token}=await openGroup(call,admin);
   const owners=[];
@@ -357,7 +418,7 @@ test('a complete exchange goes from shared submissions to reviewed identities, r
   const newcomerFields=submittedFields('New Guest','new-guest@example.test');
   await submitGroup(call,newcomer,newcomerFields);
   state=(await call('/admin/state?year=2026',undefined,admin)).data;
-  assert.equal(state.people.length,0);assert.equal(state.submissions.length,11);assert.deepEqual(sent,[]);
+  assert.equal(state.people.length,10);assert.ok(state.people.every(p=>!p.validation.submitted));assert.equal(state.submissions.length,11);assert.deepEqual(sent,[]);
   for(const submission of state.submissions) {
     const owner=owners.find(p=>p.fields.email===submission.email);
     assert.equal((await call('/admin/submissions/approve',{id:submission.id,personId:owner?.person.id||'new'},admin)).status,200);
@@ -421,8 +482,10 @@ test('review can reuse a historical identity absent from the current roster',asy
   const {db,call,admin}=await fixture(t);seed(db);
   const person=members(db,2026)[0];
   createExchange(db,2027,null);
+  // Simulate a legacy roster missing one saved identity.
+  db.prepare('DELETE FROM enrollments WHERE year=2027 AND person_id=?').run(person.id);
   const state=await call('/admin/state?year=2027',undefined,admin);
-  assert.deepEqual(state.data.people,[]);
+  assert.equal(state.data.people.length,9);assert.equal(state.data.people.some(p=>p.id===person.id),false);
   assert.ok(state.data.identities.some(p=>p.id===person.id&&p.name===person.name));
   const {auth}=await openGroup(call,admin,2027);
   await submitGroup(call,auth,submittedFields(person.name,person.email));
