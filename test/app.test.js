@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { openDatabase, importHistory, members } from '../src/database.js';
-import { createExchange, savePerson, inviteLink, draftDraw, lockDraw, prepareMail } from '../src/service.js';
+import { createExchange, savePerson, inviteLink, draftDraw, lockDraw, prepareMail, matchingOptions } from '../src/service.js';
 import { passwordHash, readConfig } from '../src/security.js';
 import { createApp } from '../src/server.js';
+import { savePartners, resetPreview } from '../src/exchange-management.js';
+import { generateDraw, validateDraw } from '../src/matching.js';
 import { createMailer } from '../src/mail.js';
 import { prepareSignIn, expireSignIns } from '../src/signin.js';
 import { hash } from '../src/security.js';
@@ -81,7 +83,7 @@ test('matching diagnostics report impossible rules and unconfirmed history witho
   assert.equal(db.prepare('SELECT state FROM exchanges WHERE year=2026').get().state,'open');
 });
 
-test('current exchanges allow partners and mutual pairs while blocking only self-matches and two-year recipients',async t=>{
+test('unmarked pairs may be mutual when the two-year history allows them',async t=>{
   const {db,call,admin}=await fixture(t),names=['Alex','Jamie','Casey','Morgan'];
   importHistory(db,history(2024,1,names));importHistory(db,history(2025,3,names));createExchange(db,2026);
   const people=members(db,2026),personByName=name=>people.find(p=>p.name===name);
@@ -95,7 +97,7 @@ test('current exchanges allow partners and mutual pairs while blocking only self
   assert.equal((await call('/admin/exclusions',{year:2026,giver:personByName('Alex').id,recipient:personByName('Casey').id,bothDirections:true},admin)).status,400);
   const report=await call('/admin/matching-test',{year:2026},admin);
   assert.equal(report.data.status,'passed');assert.equal(report.data.checked,100);
-  assert.ok(report.data.rules.includes('Partners are eligible, including mutual pairs'));
+  assert.ok(report.data.rules.includes('Marked partners cannot draw each other'));
   assert.equal((await call('/admin/draft',{year:2026},admin)).status,200);
   assert.equal((await call('/admin/finalize',{year:2026,confirm:'FINALIZE'},admin)).status,200);
   const pairs=db.prepare('SELECT giver,recipient FROM assignments WHERE year=2026').all();
@@ -1038,4 +1040,139 @@ test('submission writes and persistent global sign-in budgets bound abuse',async
   for(let i=0;i<79;i++)db.prepare('INSERT INTO sign_in_events(created_at) VALUES (?)').run(now-16*60000);
   const reopened=openDatabase(dir);try{assert.equal(prepareSignIn(reopened,config,members(db,2026)[1].email,now),null);}finally{reopened.close();}
   const response=await call('/sign-in',{email:'unknown@example.test'});assert.equal(response.status,202);assert.equal(response.cookie,undefined);
+});
+
+
+test('marked partners block both directions in tests, drafts and finalization, and carry to new years',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db);
+  const people=members(db,2026),[a,b,c]=people;
+  draftDraw(db,2026);
+  assert.equal((await call('/admin/partners',{year:2026,first:a.id,second:b.id},admin)).status,200);
+  assert.equal(db.prepare('SELECT state FROM exchanges WHERE year=2026').get().state,'open');
+  assert.equal(db.prepare('SELECT count(*) AS n FROM assignments WHERE year=2026').get().n,0);
+  const options=matchingOptions(db,2026);
+  for(let i=0;i<100;i++) {
+    const pairs=generateDraw(people.map(p=>p.id),options);
+    assert.deepEqual(validateDraw(pairs,people.map(p=>p.id),options),[]);
+    assert.ok(!pairs.some(p=>p.giver===a.id&&p.recipient===b.id||p.giver===b.id&&p.recipient===a.id));
+  }
+  const report=await call('/admin/matching-test',{year:2026},admin);
+  assert.equal(report.data.status,'passed');assert.equal(report.data.checked,100);
+  assert.equal((await call('/admin/partners',{year:2026,first:b.id,second:a.id},admin)).status,200);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM partners WHERE year=2026').get().n,1);
+  for(const body of [{first:a.id,second:a.id},{first:a.id,second:c.id},{first:c.id,second:'unknown'}])assert.equal((await call('/admin/partners',{year:2026,...body},admin)).status,400);
+  assert.equal((await call('/admin/partners',{year:2026,first:a.id,second:c.id})).status,403);
+  assert.equal((await call('/admin/partners',{year:2026,first:a.id,second:c.id},{...admin,csrf:'wrong'})).status,403);
+  // Even a persisted stale/invalid draft cannot bypass the partner rule at finalization.
+  const invalid=people.map((p,i)=>({giver:p.id,recipient:people[(i+1)%people.length].id}));
+  for(const p of invalid)db.prepare('INSERT INTO assignments(year,giver,recipient) VALUES (2026,?,?)').run(p.giver,p.recipient);
+  db.prepare("UPDATE exchanges SET state='drafted' WHERE year=2026").run();
+  assert.equal((await call('/admin/finalize',{year:2026,confirm:'FINALIZE'},admin)).status,400);
+  await call('/admin/draft',{year:2026},admin);
+  assert.equal((await call('/admin/finalize',{year:2026,confirm:'FINALIZE'},admin)).status,200);
+  const before=db.prepare('SELECT * FROM assignments ORDER BY year,giver').all();
+  assert.equal((await call('/admin/partners',{year:2026,first:a.id,second:b.id,remove:true},admin)).status,400);
+  createExchange(db,2027);
+  assert.deepEqual(matchingOptions(db,2027).partners,options.partners);
+  assert.equal((await call('/admin/partners',{year:2027,first:a.id,second:b.id,remove:true},admin)).status,200);
+  assert.equal(matchingOptions(db,2027).partners.length,0);
+  assert.equal(matchingOptions(db,2026).partners.length,1);
+  assert.deepEqual(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all(),before);
+});
+
+test('a partner conflict reports impossible matching without relaxing either direction',async t=>{
+  const {db,call,admin}=await fixture(t),names=['Alex','Jamie','Casey','Morgan'];
+  importHistory(db,history(2024,1,names));importHistory(db,history(2025,3,names));createExchange(db,2026);
+  const people=members(db,2026),id=name=>people.find(p=>p.name===name).id;
+  savePartners(db,2026,{first:id('Alex'),second:id('Casey')});
+  const result=await call('/admin/matching-test',{year:2026},admin);
+  assert.equal(result.data.status,'impossible');assert.equal(result.data.checked,0);
+  assert.equal((await call('/admin/draft',{year:2026},admin)).status,400);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM assignments WHERE year=2026').get().n,0);
+});
+
+test('reviewed test reset clears only the current exchange, revokes access, preserves history and exact email records, and allows real invitations',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);
+  const people=members(db,2026),[a,b]=people;savePartners(db,2026,{first:a.id,second:b.id});
+  db.prepare("UPDATE exchanges SET title='Synthetic exchange',budget='$20',event_date='December 25',allow_group_join=1 WHERE year=2026").run();
+  db.prepare('UPDATE enrollments SET active=0 WHERE year=2026 AND person_id=?').run(b.id);
+  db.prepare("UPDATE enrollments SET message='Private note',gifts=?,changes_requested='Please revise' WHERE year=2026").run(JSON.stringify([{label:'Book',url:'https://example.test/book'}]));
+  const redeemed=await call('/redeem',{token:new URL(inviteLink(db,config,2026,a.id)).hash.slice(1)});
+  const memberAuth={cookie:redeemed.cookie,csrf:redeemed.data.csrf};
+  const oldInvite=new URL(inviteLink(db,config,2026,a.id)).hash.slice(1);
+  const signinId=prepareSignIn(db,config,a.email),oldSignIn=db.prepare('SELECT body FROM outbox WHERE id=?').get(signinId).body.match(/\/join#([A-Za-z0-9_-]+)/)[1];
+  db.prepare("INSERT INTO group_tokens(hash,year,expires) VALUES ('old-group',2026,?)").run(Date.now()+3600000);
+  db.prepare("INSERT INTO submissions(id,year,name,email,wishlist) VALUES ('old-entry',2026,'Guest','guest@example.test','Private old submission')").run();
+  db.prepare("INSERT INTO sessions(hash,role,csrf,year,person_id,expires) VALUES ('old-owner','submission','csrf',2026,'old-entry',?)").run(Date.now()+3600000);
+  prepareMail(db,config,2026,'invite');
+  db.prepare("UPDATE outbox SET status='sent',attempts=1,sent_at='2026-10-15 12:00:00' WHERE kind='invite' AND giver=?").run(a.id);
+  draftDraw(db,2026);
+  const stable={people:db.prepare('SELECT * FROM people ORDER BY id').all(),partners:db.prepare('SELECT * FROM partners').all(),
+    past:db.prepare('SELECT * FROM assignments WHERE year<2026 ORDER BY year,giver').all(),years:db.prepare('SELECT * FROM exchanges WHERE year<2026 ORDER BY year').all(),
+    rate:db.prepare('SELECT * FROM sign_in_requests').all()};
+  const read=async()=>(await call('/admin/state?year=2026',undefined,admin)).data;
+  let state=await read(),body={year:2026,confirm:'RESET 2026',review:state.reset.review};
+  assert.equal(JSON.stringify(state).includes('Private note'),false);assert.equal(JSON.stringify(state).includes('Private old submission'),false);
+  assert.equal((await call('/admin/reset',body)).status,403);
+  assert.equal((await call('/admin/reset',body,{...admin,csrf:'wrong'})).status,403);
+  assert.equal((await call('/admin/reset',body,{...admin,headers:{Origin:'https://attacker.test'}})).status,403);
+  assert.equal((await call('/admin/reset',{...body,confirm:'RESET'},admin)).status,400);
+  assert.equal((await call('/admin/reset',{...body,year:2025},admin)).status,400);
+  db.prepare("UPDATE enrollments SET wishlist='Changed private list' WHERE year=2026 AND person_id=?").run(a.id);
+  assert.match((await call('/admin/reset',body,admin)).data.error,/changed/);
+  state=await read();body.review=state.reset.review;
+  const oldMail=db.prepare('SELECT * FROM outbox WHERE year=2026 ORDER BY id').all();
+  assert.equal((await call('/admin/reset',body,admin)).status,200);
+  assert.equal((await call('/admin/reset',body,admin)).status,400);
+  for(const table of ['invite_tokens','sign_in_tokens','group_tokens','submissions','assignments','outbox'])assert.equal(db.prepare(`SELECT count(*) AS n FROM ${table} WHERE year=2026`).get().n,0,table);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM sessions WHERE year=2026 AND role<>'admin'").get().n,0);
+  assert.equal((await call('/member/profile',undefined,memberAuth)).status,403);
+  assert.equal((await call('/redeem',{token:oldInvite})).status,401);
+  assert.equal((await call('/redeem',{token:oldSignIn})).status,401);
+  for(const p of members(db,2026)){assert.equal(p.wishlist,'');assert.equal(p.message,'');assert.deepEqual(p.gifts,[]);assert.equal(p.changes_requested,'');}
+  assert.deepEqual(db.prepare('SELECT * FROM people ORDER BY id').all(),stable.people);
+  assert.deepEqual(db.prepare('SELECT * FROM partners').all(),stable.partners);
+  assert.deepEqual(db.prepare('SELECT * FROM assignments WHERE year<2026 ORDER BY year,giver').all(),stable.past);
+  assert.deepEqual(db.prepare('SELECT * FROM exchanges WHERE year<2026 ORDER BY year').all(),stable.years);
+  assert.deepEqual(db.prepare('SELECT * FROM sign_in_requests').all(),stable.rate);
+  assert.equal(members(db,2026).find(p=>p.id===b.id).active,0);
+  const exchange=db.prepare('SELECT * FROM exchanges WHERE year=2026').get();
+  assert.equal(exchange.state,'open');assert.equal(exchange.title,'Synthetic exchange');assert.equal(exchange.budget,'$20');assert.equal(exchange.event_date,'December 25');assert.equal(exchange.allow_group_join,0);
+  const archive=db.prepare('SELECT * FROM exchange_resets WHERE year=2026').get();
+  assert.deepEqual(JSON.parse(archive.delivery_records),JSON.parse(JSON.stringify(oldMail)));
+  const exported=await call('/admin/export',undefined,admin);
+  assert.deepEqual(exported.data.resets[0].delivery_records,JSON.parse(JSON.stringify(oldMail)));
+  state=await read();assert.equal(state.outbox.length,0);assert.equal(state.resets.length,1);assert.equal(state.resets[0].delivery_records,undefined);
+  assert.equal((await call('/admin/invitations/send',{year:2026,confirm:'SEND',recipients:[{id:a.id,email:a.email}]},admin)).status,200);
+  const newMail=db.prepare("SELECT * FROM outbox WHERE year=2026 AND kind='invite'").get();assert.equal(newMail.status,'preview');
+  const freshToken=newMail.body.match(/\/join#([A-Za-z0-9_-]+)/)[1];assert.notEqual(freshToken,oldInvite);
+  const fresh=await call('/redeem',{token:freshToken});assert.equal(fresh.status,200);
+  const freshAuth={cookie:fresh.cookie,csrf:fresh.data.csrf};
+  assert.equal((await call('/member/profile',undefined,freshAuth)).data.person.wishlist,'');
+  assert.equal((await call('/member/profile',{wishlist:'New real list',message:'New note',gifts:[]},freshAuth)).status,200);
+  assert.equal((await read()).people.find(p=>p.id===a.id).validation.submitted,true);
+  assert.equal((await call('/member/profile',{wishlist:'Stale overwrite',gifts:[]},memberAuth)).status,403);
+  assert.equal(members(db,2026).find(p=>p.id===a.id).wishlist,'New real list');
+});
+
+test('reset protects finalized history, uncertain deliveries and an in-flight batch without changing anything',async t=>{
+  let accept,started;const begun=new Promise(resolve=>{started=resolve;}),release=new Promise(resolve=>{accept=resolve;});
+  const transport={async sendMail(mail){started();await release;return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+  const [a]=members(db,2026);prepareMail(db,config,2026,'invite',[a.id]);
+  let preview=resetPreview(db,2026);
+  const delivery=call('/admin/mail/send',{year:2026,confirm:'SEND'},admin);await begun;
+  try {assert.match((await call('/admin/reset',{year:2026,confirm:'RESET 2026',review:preview.review},admin)).data.error,/delivery has finished/);}
+  finally {accept();await delivery;}
+  db.prepare("UPDATE outbox SET status='uncertain' WHERE year=2026").run();
+  const before=JSON.stringify(db.prepare('SELECT * FROM outbox').all());preview=resetPreview(db,2026);
+  assert.match(preview.blocked,/uncertain/);
+  assert.equal((await call('/admin/reset',{year:2026,confirm:'RESET 2026',review:preview.review},admin)).status,400);
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM outbox').all()),before);
+  db.prepare("UPDATE outbox SET status='sent' WHERE year=2026").run();draftDraw(db,2026);lockDraw(db,2026);
+  preview=resetPreview(db,2026);assert.match(preview.blocked,/Finalized/);
+  const locked=JSON.stringify(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all());
+  assert.equal((await call('/admin/reset',{year:2026,confirm:'RESET 2026',review:preview.review},admin)).status,400);
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all()),locked);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM exchange_resets').get().n,0);
 });

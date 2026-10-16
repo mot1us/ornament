@@ -3,7 +3,8 @@ import { generateDraw, validateDraw } from './matching.js';
 export function testMatchmaking(people,options,{draws=100,budgetMs=1000,maxVisits=50000}={}) {
   const report={status:'passed',participants:people.length,requested:draws,checked:0,issues:[],
     rules:['Everyone gives and receives once','No self-matches','No repeat recipients from the previous two years',
-      options.noReciprocal===true?'Original restriction: no mutual pairs':'Partners are eligible, including mutual pairs',
+      'Marked partners cannot draw each other',
+      ...(options.noReciprocal===true?['Original restriction: no mutual pairs']:[]),
       ...(options.exclusions?.length?['Saved exclusions respected']:[])]};
   const deadline=performance.now()+budgetMs;
   for(let i=0;i<draws;i++) {

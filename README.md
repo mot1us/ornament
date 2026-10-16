@@ -4,7 +4,7 @@ Self-hosted Secret Santa for family and friends.
 Add your family members, email invitations, collect private wish lists, then draw names and email matches.
 
 - Avoids matches from the previous two years.
-- Prevents self-matches; partners can draw each other if the two-year history allows it.
+- Prevents self-matches and matches between marked partners.
 - Organizer controls people, draws, and email.
 - Wish lists, messages, and current matches stay hidden from the organizer until explicitly revealed.
 - Local checks report submission readiness; correction requests can be emailed without opening lists.
@@ -28,6 +28,11 @@ Add known participants and their email addresses, including yourself if you are
 taking part. In **Email**, prepare wish-list invitations, check recipient addresses,
 then send. Each invitation works once for 48 hours; returning participants can
 request a 15-minute sign-in email at `/join`. Email starts in preview mode.
+
+In **Rules → Partners**, add each couple once to block matches in both directions.
+**Rules → Reset test data** clears the selected open year for real invitations,
+keeping your roster, partners, settings, past matches, and archived delivery records.
+Review the confirmation before resetting; it does not send emails.
 
 The dashboard shows submission checks instead of private content. Use **Checks &
 options** to request changes or deliberately reveal a wish list. Draw checks and

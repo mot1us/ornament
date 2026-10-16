@@ -89,9 +89,12 @@ export function savePerson(db, year, input) {
 }
 
 export function matchingOptions(db, year) {
+  const partners=db.prepare('SELECT first,second FROM partners WHERE year=? ORDER BY first').all(year);
   return {year, noReciprocal: Boolean(getExchange(db,year).no_reciprocal),
+    partners,
     history: db.prepare('SELECT year,giver,recipient FROM assignments WHERE year IN (?,?)').all(year-1,year-2),
-    exclusions: db.prepare('SELECT giver,recipient FROM exclusions WHERE year=?').all(year)};
+    exclusions: [...db.prepare('SELECT giver,recipient FROM exclusions WHERE year=?').all(year),
+      ...partners.flatMap(p=>[{giver:p.first,recipient:p.second},{giver:p.second,recipient:p.first}])]};
 }
 
 export function historyReadiness(db, year) {

@@ -49,15 +49,34 @@ Old invitation links for the selected person are replaced, as with normal
 invitation issuance. Test messages are delivered only for the reviewed batch;
 assignment and other pending messages are untouched.
 
+**Rules → Reset test data** prepares only the selected open/drafted exchange
+for real invitations. The organizer reviews counts and types `RESET <year>`.
+If the underlying lists, roster, draft, partner choices, or mail records changed,
+the confirmation must be reviewed again. Reset clears wish lists, messages, gift
+links, correction requests, legacy submissions, draft assignments, current
+invitation status, and all family sessions/access tokens for that year. It closes
+group registration. People, emails, aliases, participation choices, partner
+pairs, settings, audit history, and other years are preserved. Finalized and
+historical exchanges cannot be reset. Sending or uncertain messages block reset;
+wait for delivery or review uncertain messages through Delivery first.
+
+Earlier email records are archived unchanged in the private SQLite database,
+including successful delivery records. They appear in the explicit private
+export; old links in them stop working. Cleared wish lists have no in-app undo;
+existing external backups follow their normal retention. No email is sent by
+resetting. After reset, People shows Not invited / Not submitted, and the usual
+reviewed invitation action can issue new unique links. Organizer sessions and
+persistent sign-in rate limits remain intact.
+
 Each year has independent settings and assignments. Everyone gives once and
 receives once; nobody can draw themselves or a recipient they gave to in either
-of the previous two calendar years. Partners may be matched, including mutual
-pairs, when history allows it. There is no partner exclusion or mutual-pair
-restriction in current exchanges. The upgrade removes extra exclusions and
-disables the mutual-pair restriction once for existing open/drafted exchanges,
-discarding a draft if its rules changed. It preserves finalized/archived draws,
-their original rule metadata, identities, private lists, and delivery records.
-New years explicitly use the simpler rules, including on older databases.
+of the previous two calendar years. Under **Rules → Partners**, mark each couple
+once to exclude both directions. A person can have one marked partner per year;
+remove an existing pair before changing partners. Saving or removing a pair
+invalidates a draft. The choices carry into new years alongside the roster and
+remain saved when someone is left out. Unrelated mutual pairs are allowed.
+Finalized or archived partner choices cannot change. Older finalized exchanges
+retain their original restrictions.
 The latest two years' directed giver-to-recipient matches are excluded even if
 their history is provisional. A draw can be drafted with incomplete history but
 cannot be finalized until both preceding histories are verified.
@@ -66,7 +85,7 @@ happened in a prior year. This counts as verified empty history; it cannot
 replace an existing draw.
 
 The randomized constraint search returns a valid draw or an explicit failure.
-It checks self-matches and directed history. Saved extra restrictions on older
+It checks self-matches, both directions of marked partnerships, and directed history. Saved extra restrictions on older
 finalized exchanges remain supported for validating those records. It does not
 claim to sample all possible valid draws uniformly. A
 bounded search prevents a complex exchange from exhausting the server.
@@ -183,6 +202,8 @@ after the draw. Neither exposes a list of other family members, their email
 addresses, or the incoming giver.
 
 The organizer export includes people, rosters, matching settings, exclusions,
-and assignments. It omits session credentials and prepared email bodies. Full
+assignments, partner pairs, and email records archived by an explicit reset.
+Archived records include private message bodies and revoked links; treat the export
+as private. Current session credentials and current prepared email bodies are omitted. Full
 SQLite backups include all runtime data and therefore need stronger storage
 protection.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- Add yearly partner selection that blocks both matching directions, carries forward with the roster, and invalidates stale drafts.
+- Add a reviewed current-year test reset with typed confirmation: clear private test lists, draft matches, invitation status, and old access while preserving people, partners, settings, past draws, and exact archived delivery records. Protect finalized exchanges and in-flight or uncertain mail.
+- Open replacement invitation links correctly in an already-open family tab, clearing earlier form and reveal state.
+
 ## 0.9.1
 
 - Simplify open exchanges to one gift given/received per person, no self-matches, and no repeat recipient from the previous two calendar years. Allow partners and mutual pairs, remove extra rule controls, and migrate open restrictions while preserving finalized draws and history.

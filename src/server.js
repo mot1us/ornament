@@ -11,6 +11,7 @@ import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
 import { groupLink, submissionProfile, saveSubmission, listSubmissions, approveSubmission, rejectSubmission } from './submissions.js';
 import { checkedWishlist, validateWishlist } from './validation.js';
 import { validateDraw } from './matching.js';
+import { savePartners, resetPreview, resetExchange } from './exchange-management.js';
 
 export function createApp(config,db,providedTransport) {
   const app = express();
@@ -140,6 +141,9 @@ export function createApp(config,db,providedTransport) {
       validation:validateWishlist(p,p.email),changesRequested:p.changes_requested})) : [];
     res.json({exchanges,year,exchange,people,identities:db.prepare('SELECT id,name,email,aliases FROM people ORDER BY name COLLATE NOCASE').all().map(p=>({...p,aliases:JSON.parse(p.aliases)})),submissions:exchange?listSubmissions(db,year):[],
       exclusions:exchange ? matchingOptions(db,year).exclusions : [],
+      partners:exchange ? db.prepare('SELECT first,second FROM partners WHERE year=? ORDER BY first').all(year) : [],
+      reset:exchange ? resetPreview(db,year) : null,
+      resets:exchange ? db.prepare('SELECT id,summary,created_at FROM exchange_resets WHERE year=? ORDER BY created_at DESC').all(year).map(r=>({...r,summary:JSON.parse(r.summary)})) : [],
       assignments:exchange?.state==='archived' ? db.prepare('SELECT giver,recipient FROM assignments WHERE year=?').all(year) : [],
       draw:exchange?drawStatus(year):null,
       history:exchange ? historyReadiness(db,year) : [],
@@ -193,7 +197,9 @@ export function createApp(config,db,providedTransport) {
   app.get('/api/admin/export',(_req,res)=>{
     const exported = {schema:1,exportedAt:new Date().toISOString(),people:db.prepare('SELECT * FROM people').all(),
       exchanges:db.prepare('SELECT * FROM exchanges').all(),enrollments:db.prepare('SELECT * FROM enrollments').all(),
-      assignments:db.prepare('SELECT * FROM assignments').all(),exclusions:db.prepare('SELECT * FROM exclusions').all()};
+      assignments:db.prepare('SELECT * FROM assignments').all(),exclusions:db.prepare('SELECT * FROM exclusions').all(),
+      partners:db.prepare('SELECT * FROM partners').all(),
+      resets:db.prepare('SELECT * FROM exchange_resets').all().map(r=>({...r,summary:JSON.parse(r.summary),delivery_records:JSON.parse(r.delivery_records)}))};
     res.set('Content-Disposition','attachment; filename="secret-santa-history.json"').json(exported);
   });
   app.post('/api/admin/exchanges',(req,res)=>{
@@ -271,9 +277,16 @@ export function createApp(config,db,providedTransport) {
       audit(db,'correct-contact',{year,id});
     });res.json({ok:true});
   });
+  app.post('/api/admin/partners',(req,res)=>{
+    savePartners(db,Number(req.body.year),req.body);res.json({ok:true});
+  });
+  app.post('/api/admin/reset',(req,res)=>{
+    if(mailer.busy)throw new Error('Wait until email delivery has finished.');
+    res.json(resetExchange(db,Number(req.body.year),req.body));
+  });
   app.post('/api/admin/exclusions',(req,res)=>{
     const year = Number(req.body.year);mutable(db,year);
-    if(!req.body.remove)throw new Error('Matching only excludes yourself and your recipients from the previous two years. Partners are eligible.');
+    if(!req.body.remove)throw new Error('Use partner selection in Rules to exclude a couple in both directions.');
     const people = members(db,year).map(p=>p.id);
     if (req.body.giver===req.body.recipient || !people.includes(req.body.giver) || !people.includes(req.body.recipient)) throw new Error('Choose two distinct people in this exchange.');
     transaction(db,()=>{

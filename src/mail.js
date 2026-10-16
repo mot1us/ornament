@@ -42,6 +42,7 @@ export function createMailer(db,config,providedTransport) {
     }
   }
   return {
+    get busy() { return busy; },
     ready: config.emailMode === 'smtp' && Boolean(transport),
     async deliverSignIn(id) {
       expireSignIns(db);

@@ -375,3 +375,7 @@ dialog[open]::backdrop { animation: page-arrive 180ms both; }
 @media (forced-colors: active) {
   select { appearance: auto; background-image: none; padding-right: 10px; }
 }
+
+.exchange-tools { margin-top: 24px; }
+.exchange-tools .submission-list { margin-bottom: 24px; }
+.exchange-tools li form { margin: 0; }

@@ -23,6 +23,14 @@ export function openDatabase(dataDir) {
       year INTEGER REFERENCES exchanges(year), giver TEXT REFERENCES people(id), recipient TEXT REFERENCES people(id),
       reason TEXT NOT NULL DEFAULT '', PRIMARY KEY (year, giver, recipient)
     );
+    CREATE TABLE IF NOT EXISTS partners (
+      year INTEGER REFERENCES exchanges(year), first TEXT REFERENCES people(id), second TEXT REFERENCES people(id),
+      PRIMARY KEY(year,first), UNIQUE(year,second), CHECK(first < second)
+    );
+    CREATE TABLE IF NOT EXISTS exchange_resets (
+      id TEXT PRIMARY KEY, year INTEGER REFERENCES exchanges(year), summary TEXT NOT NULL, delivery_records TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS assignments (
       year INTEGER REFERENCES exchanges(year), giver TEXT REFERENCES people(id), recipient TEXT REFERENCES people(id),
       PRIMARY KEY(year, giver), UNIQUE(year, recipient)
@@ -128,6 +136,11 @@ export function carryRoster(db,year,sourceYear) {
   sourceYear=sourceYear || db.prepare('SELECT max(year) AS year FROM enrollments WHERE year<?').get(year).year;
   if(!sourceYear)return {sourceYear:null,count:0};
   const result=db.prepare('INSERT OR IGNORE INTO enrollments(year,person_id,active) SELECT ?,person_id,active FROM enrollments WHERE year=?').run(year,sourceYear);
+  db.prepare(`INSERT OR IGNORE INTO partners(year,first,second) SELECT ?,p.first,p.second FROM partners p WHERE p.year=?
+    AND EXISTS (SELECT 1 FROM enrollments WHERE year=? AND person_id=p.first)
+    AND EXISTS (SELECT 1 FROM enrollments WHERE year=? AND person_id=p.second)
+    AND NOT EXISTS (SELECT 1 FROM partners target WHERE target.year=? AND
+      (target.first IN (p.first,p.second) OR target.second IN (p.first,p.second)))`).run(year,sourceYear,year,year,year);
   return {sourceYear,count:result.changes};
 }
 
