@@ -225,9 +225,9 @@ export function createApp(config,db,providedTransport) {
   app.post('/api/admin/settings',(req,res)=>{
     const year = Number(req.body.year);mutable(db,year);
     transaction(db,()=>{
-      db.prepare('UPDATE exchanges SET title=?,budget=?,event_date=?,no_reciprocal=? WHERE year=?').run(
+      db.prepare('UPDATE exchanges SET title=?,budget=?,event_date=?,no_reciprocal=0 WHERE year=?').run(
         String(req.body.title||`Family Christmas ${year}`).slice(0,100),String(req.body.budget||'').slice(0,80),
-        String(req.body.event_date||'').slice(0,30),req.body.noReciprocal===false?0:1,year);
+        String(req.body.event_date||'').slice(0,30),year);
       invalidateDraft(db,year);audit(db,'save-settings',{year});
     });res.json({ok:true});
   });
@@ -273,14 +273,14 @@ export function createApp(config,db,providedTransport) {
   });
   app.post('/api/admin/exclusions',(req,res)=>{
     const year = Number(req.body.year);mutable(db,year);
+    if(!req.body.remove)throw new Error('Matching only excludes yourself and your recipients from the previous two years. Partners are eligible.');
     const people = members(db,year).map(p=>p.id);
     if (req.body.giver===req.body.recipient || !people.includes(req.body.giver) || !people.includes(req.body.recipient)) throw new Error('Choose two distinct people in this exchange.');
     transaction(db,()=>{
       const pairs = [[req.body.giver,req.body.recipient]];
       if (req.body.bothDirections) pairs.push([req.body.recipient,req.body.giver]);
       for (const [giver,recipient] of pairs) {
-        if (req.body.remove) db.prepare('DELETE FROM exclusions WHERE year=? AND giver=? AND recipient=?').run(year,giver,recipient);
-        else db.prepare('INSERT OR REPLACE INTO exclusions(year,giver,recipient,reason) VALUES (?,?,?,?)').run(year,giver,recipient,String(req.body.reason||'').slice(0,200));
+        db.prepare('DELETE FROM exclusions WHERE year=? AND giver=? AND recipient=?').run(year,giver,recipient);
       }
       invalidateDraft(db,year);audit(db,'save-exclusions',{year});
     });res.json({ok:true});

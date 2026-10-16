@@ -13,7 +13,7 @@ export function openDatabase(dataDir) {
     CREATE TABLE IF NOT EXISTS exchanges (
       year INTEGER PRIMARY KEY, title TEXT NOT NULL, budget TEXT NOT NULL DEFAULT '', event_date TEXT NOT NULL DEFAULT '',
       state TEXT NOT NULL DEFAULT 'open', history_status TEXT NOT NULL DEFAULT 'provisional',
-      no_reciprocal INTEGER NOT NULL DEFAULT 1, source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      no_reciprocal INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS enrollments (
       year INTEGER REFERENCES exchanges(year), person_id TEXT REFERENCES people(id), active INTEGER NOT NULL DEFAULT 1,
@@ -104,6 +104,23 @@ export function openDatabase(dataDir) {
       db.prepare('INSERT INTO schema_migrations(name) VALUES (?)').run('automatic-roster-v1');
     });
   }
+  if(!db.prepare('SELECT name FROM schema_migrations WHERE name=?').get('simple-matching-rules-v1')) {
+    transaction(db,()=>{
+      const exchanges=db.prepare("SELECT year,state,no_reciprocal FROM exchanges WHERE state IN ('open','drafted')").all();
+      for(const exchange of exchanges) {
+        const removed=db.prepare('DELETE FROM exclusions WHERE year=?').run(exchange.year).changes;
+        if(exchange.no_reciprocal||removed) {
+          db.prepare('UPDATE exchanges SET no_reciprocal=0 WHERE year=?').run(exchange.year);
+          if(exchange.state==='drafted') {
+            db.prepare('DELETE FROM assignments WHERE year=?').run(exchange.year);
+            db.prepare("UPDATE exchanges SET state='open' WHERE year=?").run(exchange.year);
+          }
+          audit(db,'simplify-matching-rules',{year:exchange.year,removedExclusions:removed,mutualMatchesAllowed:true});
+        }
+      }
+      db.prepare('INSERT INTO schema_migrations(name) VALUES (?)').run('simple-matching-rules-v1');
+    });
+  }
   return db;
 }
 
@@ -133,7 +150,7 @@ export function members(db, year) {
 
 export function ensureYear(db, year) {
   if (!Number.isInteger(year) || year < 2000 || year > 2200) throw new Error('Enter a year between 2000 and 2200.');
-  db.prepare('INSERT OR IGNORE INTO exchanges(year,title) VALUES (?,?)').run(year, `Family Christmas ${year}`);
+  db.prepare('INSERT OR IGNORE INTO exchanges(year,title,no_reciprocal) VALUES (?,?,0)').run(year, `Family Christmas ${year}`);
 }
 
 export function findPerson(db, name) {

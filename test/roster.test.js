@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { openDatabase,importHistory,members } from '../src/database.js';
 import { createExchange,savePerson,setParticipation } from '../src/service.js';
 
@@ -108,4 +109,39 @@ test('the invitation workflow upgrade closes group entry but preserves submitted
   assert.equal(f.db.prepare("SELECT count(*) AS n FROM sessions WHERE role='group'").get().n,0);
   assert.deepEqual(f.db.prepare('SELECT * FROM submissions').all(),saved);
   assert.deepEqual(f.db.prepare("SELECT * FROM sessions WHERE role='submission'").all(),owner);
+});
+
+test('simple matching upgrade removes extra open-year restrictions and preserves finalized data and email records',t=>{
+  const f=fixture(t);createExchange(f.db,2026);createExchange(f.db,2027);
+  const people=members(f.db,2026);
+  for(const [year,state] of [[2026,'drafted'],[2027,'locked']]) {
+    f.db.prepare('UPDATE exchanges SET state=?,no_reciprocal=1 WHERE year=?').run(state,year);
+    f.db.prepare('INSERT INTO exclusions(year,giver,recipient,reason) VALUES (?,?,?,?)').run(year,people[0].id,people[1].id,'Old extra restriction');
+    for(const [i,p] of people.entries())f.db.prepare('INSERT INTO assignments(year,giver,recipient) VALUES (?,?,?)').run(year,p.id,people[(i+1)%people.length].id);
+  }
+  f.db.prepare("UPDATE enrollments SET wishlist='Saved private list',message='Saved private note' WHERE year=2026").run();
+  f.db.prepare("INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body,status) VALUES ('sent-unchanged',2026,?,'invite','member@example.test','Subject','Private body','sent')").run(people[0].id);
+  const before={locked:f.db.prepare('SELECT * FROM exchanges WHERE year=2027').get(),history:f.db.prepare('SELECT * FROM assignments WHERE year<>2026 ORDER BY year,giver').all(),exclusions:f.db.prepare('SELECT * FROM exclusions WHERE year=2027').all(),lists:f.db.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all(),mail:f.db.prepare('SELECT * FROM outbox').all()};
+  f.db.prepare("DELETE FROM schema_migrations WHERE name='simple-matching-rules-v1'").run();f.db.close();f.db=openDatabase(f.dir);
+  assert.equal(f.db.prepare('SELECT no_reciprocal FROM exchanges WHERE year=2026').get().no_reciprocal,0);
+  assert.equal(f.db.prepare('SELECT state FROM exchanges WHERE year=2026').get().state,'open');
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM exclusions WHERE year=2026').get().n,0);
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM assignments WHERE year=2026').get().n,0);
+  assert.deepEqual(f.db.prepare('SELECT * FROM exchanges WHERE year=2027').get(),before.locked);
+  assert.deepEqual(f.db.prepare('SELECT * FROM assignments WHERE year<>2026 ORDER BY year,giver').all(),before.history);
+  assert.deepEqual(f.db.prepare('SELECT * FROM exclusions WHERE year=2027').all(),before.exclusions);
+  assert.deepEqual(f.db.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all(),before.lists);
+  assert.deepEqual(f.db.prepare('SELECT * FROM outbox').all(),before.mail);
+  createExchange(f.db,2028);assert.equal(f.db.prepare('SELECT no_reciprocal FROM exchanges WHERE year=2028').get().no_reciprocal,0);
+});
+
+test('new exchanges use simple rules even when an older database retains the old column default',t=>{
+  const dir=mkdtempSync(join(tmpdir(),'ornament-old-default-')),legacy=new DatabaseSync(join(dir,'secret-santa.sqlite'));
+  legacy.exec(`CREATE TABLE exchanges (year INTEGER PRIMARY KEY,title TEXT NOT NULL,budget TEXT NOT NULL DEFAULT '',event_date TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'open',history_status TEXT NOT NULL DEFAULT 'provisional',no_reciprocal INTEGER NOT NULL DEFAULT 1,
+    source TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+  legacy.close();const db=openDatabase(dir);t.after(()=>{db.close();rmSync(dir,{recursive:true,force:true});});
+  assert.equal(db.prepare('PRAGMA table_info(exchanges)').all().find(c=>c.name==='no_reciprocal').dflt_value,'1');
+  createExchange(db,2026);
+  assert.equal(db.prepare('SELECT no_reciprocal FROM exchanges WHERE year=2026').get().no_reciprocal,0);
 });

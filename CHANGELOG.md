@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1
+
+- Simplify open exchanges to one gift given/received per person, no self-matches, and no repeat recipient from the previous two calendar years. Allow partners and mutual pairs, remove extra rule controls, and migrate open restrictions while preserving finalized draws and history.
+
 ## 0.9.0
 
 - Add selected fresh test invitations, including members already invited or submitted, using unique single-use links and empty first-submission forms. Keep saved lists until their owner submits the replacement, preserve earlier delivery records, and protect uncertain deliveries and finalized exchanges.

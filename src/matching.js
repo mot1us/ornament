@@ -27,7 +27,7 @@ export function validateDraw(pairs, people, options) {
     if (!ids.has(giver) || !ids.has(recipient)) errors.push('A match contains someone outside this exchange.');
     if (giver === recipient) errors.push('Someone drew themselves.');
     if (forbidden.has(JSON.stringify([giver, recipient]))) errors.push('A match violates an exclusion or the two-year history rule.');
-    if (options.noReciprocal !== false && edges.get(recipient) === giver) errors.push('Two people drew each other.');
+    if (options.noReciprocal === true && edges.get(recipient) === giver) errors.push('Two people drew each other.');
   }
   return [...new Set(errors)];
 }
@@ -42,7 +42,7 @@ export function generateDraw(people, options, {maxVisits=500000,deadline=Infinit
   let visits = 0;
   const candidates = giver => shuffled(people.filter(recipient => recipient !== giver && !used.has(recipient) &&
     !forbidden.has(JSON.stringify([giver, recipient])) &&
-    (options.noReciprocal === false || edges.get(recipient) !== giver)));
+    (options.noReciprocal !== true || edges.get(recipient) !== giver)));
   const search = () => {
     if (++visits > maxVisits || performance.now()>=deadline) throw Object.assign(new Error('The search limit was reached. Reduce the exchange size or review its restrictions.'),{code:'SEARCH_LIMIT'});
     if (edges.size === people.length) return true;

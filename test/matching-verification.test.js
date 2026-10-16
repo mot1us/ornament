@@ -45,7 +45,6 @@ test('matching accepts the supported roster boundaries and rejects duplicate or 
     assert.equal(pairs.length,size);
     assert.equal(new Set(pairs.map(p=>p.recipient)).size,size);
     assert.ok(pairs.every(p=>p.giver!==p.recipient));
-    assert.ok(pairs.every(p=>!pairs.some(reverse=>reverse.giver===p.recipient && reverse.recipient===p.giver)));
   }
   for (const people of [[],['a'],['a','b'],['a','b','a'],Array.from({length:51},(_,i)=>`person-${i}`)]) {
     assert.throws(()=>generateDraw(people,{year:2026}),/between 3 and 50 distinct/);

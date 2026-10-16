@@ -81,6 +81,29 @@ test('matching diagnostics report impossible rules and unconfirmed history witho
   assert.equal(db.prepare('SELECT state FROM exchanges WHERE year=2026').get().state,'open');
 });
 
+test('current exchanges allow partners and mutual pairs while blocking only self-matches and two-year recipients',async t=>{
+  const {db,call,admin}=await fixture(t),names=['Alex','Jamie','Casey','Morgan'];
+  importHistory(db,history(2024,1,names));importHistory(db,history(2025,3,names));createExchange(db,2026);
+  const people=members(db,2026),personByName=name=>people.find(p=>p.name===name);
+  for(const [i,p] of people.entries()) {
+    savePerson(db,2026,{...p,email:`member-${i}@example.test`});
+    db.prepare("UPDATE enrollments SET wishlist='A book' WHERE year=2026 AND person_id=?").run(p.id);
+  }
+  assert.equal(db.prepare('SELECT no_reciprocal FROM exchanges WHERE year=2026').get().no_reciprocal,0);
+  assert.equal((await call('/admin/settings',{year:2026,title:'Synthetic family',noReciprocal:true},admin)).status,200);
+  assert.equal(db.prepare('SELECT no_reciprocal FROM exchanges WHERE year=2026').get().no_reciprocal,0);
+  assert.equal((await call('/admin/exclusions',{year:2026,giver:personByName('Alex').id,recipient:personByName('Casey').id,bothDirections:true},admin)).status,400);
+  const report=await call('/admin/matching-test',{year:2026},admin);
+  assert.equal(report.data.status,'passed');assert.equal(report.data.checked,100);
+  assert.ok(report.data.rules.includes('Partners are eligible, including mutual pairs'));
+  assert.equal((await call('/admin/draft',{year:2026},admin)).status,200);
+  assert.equal((await call('/admin/finalize',{year:2026,confirm:'FINALIZE'},admin)).status,200);
+  const pairs=db.prepare('SELECT giver,recipient FROM assignments WHERE year=2026').all();
+  for(const [i,name] of names.entries())assert.equal(pairs.find(p=>p.giver===personByName(name).id).recipient,personByName(names[(i+2)%4]).id);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM outbox').get().n,0);
+  assert.equal((await call('/admin/settings',{year:2026,title:'Cannot change finalized'},admin)).status,400);
+});
+
 test('organizer login, CSRF, and origin restrictions protect private admin data',async t=>{
   const {call,admin}=await fixture(t);
   assert.equal((await call('/admin/state')).status,403);
@@ -554,7 +577,8 @@ test('a complete exchange goes from shared submissions to reviewed identities, r
   }
   assert.equal(db.prepare('SELECT count(*) AS n FROM people').get().n,11);
   const people=members(db,2026),first=people[0],excluded=people.find(p=>p.id!==first.id);
-  assert.equal((await call('/admin/exclusions',{year:2026,giver:first.id,recipient:excluded.id},admin)).status,200);
+  assert.equal((await call('/admin/exclusions',{year:2026,giver:first.id,recipient:excluded.id},admin)).status,400);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM exclusions WHERE year=2026').get().n,0);
   assert.equal((await call('/admin/draft',{year:2026},admin)).status,200);
   assert.equal((await call('/admin/finalize',{year:2026,confirm:'FINALIZE'},admin)).status,400);
   assert.equal((await call('/admin/history/confirm',{year:2025},admin)).status,200);
@@ -566,8 +590,6 @@ test('a complete exchange goes from shared submissions to reviewed identities, r
   for(const pair of pairs) {
     assert.notEqual(pair.giver,pair.recipient);
     assert.equal(previous.some(p=>p.giver===pair.giver&&p.recipient===pair.recipient),false);
-    assert.equal(pairs.some(p=>p.giver===pair.recipient&&p.recipient===pair.giver),false);
-    assert.equal(pair.giver===first.id&&pair.recipient===excluded.id,false);
   }
   assert.equal((await call('/admin/mail/prepare',{year:2026,kind:'assignment'},admin)).status,200);
   assert.equal((await call('/admin/mail/send',{year:2026},admin)).status,400);

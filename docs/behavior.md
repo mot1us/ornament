@@ -7,7 +7,7 @@ The People page is the main invitation workflow: add or edit family members,
 review the listed recipients, explicitly send their invitations, and see who has
 submitted. A new year automatically carries the most recent earlier roster that
 has members, including its participation choices; wish lists, messages, gift
-links, and exclusions start fresh. On the first upgrade to this behavior,
+links start fresh. On the first upgrade to this behavior,
 missing prior-year members are added to existing open or drafted exchanges.
 Existing annual content is not overwritten, and finalized or archived exchanges
 are not changed. Adding members to an existing draft discards that stale draft.
@@ -49,22 +49,32 @@ Old invitation links for the selected person are replaced, as with normal
 invitation issuance. Test messages are delivered only for the reviewed batch;
 assignment and other pending messages are untouched.
 
-Each year has independent settings, exclusions, and assignments. The latest two
-calendar years' giver-to-recipient edges are excluded even if their history is
-still provisional. A draw can be drafted with incomplete history but cannot be
-finalized until both preceding histories are verified.
+Each year has independent settings and assignments. Everyone gives once and
+receives once; nobody can draw themselves or a recipient they gave to in either
+of the previous two calendar years. Partners may be matched, including mutual
+pairs, when history allows it. There is no partner exclusion or mutual-pair
+restriction in current exchanges. The upgrade removes extra exclusions and
+disables the mutual-pair restriction once for existing open/drafted exchanges,
+discarding a draft if its rules changed. It preserves finalized/archived draws,
+their original rule metadata, identities, private lists, and delivery records.
+New years explicitly use the simpler rules, including on older databases.
+The latest two years' directed giver-to-recipient matches are excluded even if
+their history is provisional. A draw can be drafted with incomplete history but
+cannot be finalized until both preceding histories are verified.
 For a new tradition, the organizer can explicitly confirm that no exchange
 happened in a prior year. This counts as verified empty history; it cannot
 replace an existing draw.
 
 The randomized constraint search returns a valid draw or an explicit failure.
-It checks self-matches, exclusions, directed history, and optionally reciprocal
-edges. It does not claim to sample all possible valid draws uniformly. A
+It checks self-matches and directed history. Saved extra restrictions on older
+finalized exchanges remain supported for validating those records. It does not
+claim to sample all possible valid draws uniformly. A
 bounded search prevents a complex exchange from exhausting the server.
 
 **Draw → Test matchmaking** checks up to 100 temporary draws using the selected
-exchange's active participants, exclusions, two preceding calendar years, and
-reciprocal setting. The response contains counts and rule results only, never
+exchange's active participants and two preceding calendar years. Testing an
+older finalized draw also honors its saved original restrictions. The response
+contains counts and rule results only, never
 pairings, identities, wish lists, or email content. It does not save a draft,
 change a finalized draw, write database records, or prepare/send email.
 Incomplete or provisional history is flagged because only recorded matches can

@@ -4,7 +4,8 @@ Self-hosted Secret Santa for family and friends.
 Add your family members, email invitations, collect private wish lists, then draw names and email matches.
 
 - Avoids matches from the previous two years.
-- Organizer controls people, exclusions, draws, and email.
+- Prevents self-matches; partners can draw each other if the two-year history allows it.
+- Organizer controls people, draws, and email.
 - Wish lists, messages, and current matches stay hidden from the organizer until explicitly revealed.
 - Local checks report submission readiness; correction requests can be emailed without opening lists.
 - Private SQLite data and daily backups on your server.
