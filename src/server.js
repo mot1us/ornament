@@ -300,13 +300,15 @@ export function createApp(config,db,providedTransport) {
   });
   app.post('/api/admin/draft',(req,res)=>{const year=Number(req.body.year);draftDraw(db,year);res.json({ok:true,draw:drawStatus(year)});});
   app.post('/api/admin/matching-test',(req,res)=>{
+    const includePairings=req.body.showPairings===true;
+    if(includePairings&&req.body.confirm!=='REVEAL')throw new Error('Confirm revealing test pairings before requesting names.');
     const now=Date.now(),key=`matching-test:${req.session.hash}`;
     for(const [id,entry] of attempts)if(entry.until<now)attempts.delete(id);
     const entry=attempts.get(key)||{count:0,until:now+15*60000};
     if(!attempts.has(key)&&attempts.size>=1000)return res.status(429).json({error:'Please try again later.'});
     attempts.set(key,entry);
     if(++entry.count>5)return res.status(429).json({error:'Wait fifteen minutes before running another matching test.'});
-    res.json(matchingTest(db,Number(req.body.year)));
+    res.json(matchingTest(db,Number(req.body.year),{includePairings}));
   });
   app.post('/api/admin/finalize',(req,res)=>{
     if (req.body.confirm !== 'FINALIZE') throw new Error('Type FINALIZE to confirm.');

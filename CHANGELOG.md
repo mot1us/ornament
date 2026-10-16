@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.1
+
+- Add optional named results for every validated matchmaking test draw, with a draw selector and hide action. Keep normal diagnostics private and preserve real draws, wish lists, history, and email records.
+
 ## 0.10.0
 
 - Add yearly partner selection that blocks both matching directions, carries forward with the roster, and invalidates stale drafts.

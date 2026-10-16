@@ -379,3 +379,12 @@ dialog[open]::backdrop { animation: page-arrive 180ms both; }
 .exchange-tools { margin-top: 24px; }
 .exchange-tools .submission-list { margin-bottom: 24px; }
 .exchange-tools li form { margin: 0; }
+
+.test-pairings { margin-top: 24px; }
+.test-pairings h4 { margin-top: 0; }
+.test-pairings select { max-width: 240px; margin: 8px 0 16px; }
+@media (max-width: 700px) {
+  .test-pairings .responsive-table td:first-child .mobile-field-label,
+  .test-pairings .row-actions .mobile-field-label { display: block; }
+  .test-pairings .responsive-table .row-actions { display: block; }
+}

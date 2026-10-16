@@ -1,7 +1,8 @@
 import { generateDraw, validateDraw } from './matching.js';
 
-export function testMatchmaking(people,options,{draws=100,budgetMs=1000,maxVisits=50000}={}) {
+export function testMatchmaking(people,options,{draws=100,budgetMs=1000,maxVisits=50000,includePairings=false}={}) {
   const report={status:'passed',participants:people.length,requested:draws,checked:0,issues:[],
+    ...(includePairings?{testDraws:[]}:{}),
     rules:['Everyone gives and receives once','No self-matches','No repeat recipients from the previous two years',
       'Marked partners cannot draw each other',
       ...(options.noReciprocal===true?['Original restriction: no mutual pairs']:[]),
@@ -19,6 +20,7 @@ export function testMatchmaking(people,options,{draws=100,budgetMs=1000,maxVisit
     const issues=validateDraw(pairs,people,options);
     if(issues.length){report.status='failed';report.issues=issues;return report;}
     report.checked++;
+    if(includePairings)report.testDraws.push(pairs);
   }
   return report;
 }

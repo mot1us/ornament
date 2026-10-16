@@ -71,6 +71,51 @@ test('matching diagnostics require organizer authentication, origin and CSRF, an
   assert.equal((await call('/admin/matching-test',{year:2026},admin)).status,429);
 });
 
+test('explicit test pairing results show every validated draw without changing open, draft, finalized or mail data',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);
+  const [a,b,inactive]=members(db,2026);savePartners(db,2026,{first:a.id,second:b.id});
+  savePerson(db,2026,{...inactive,active:false});prepareMail(db,config,2026,'invite');
+  const snapshot=()=>JSON.stringify(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(({name})=>[name,db.prepare(`SELECT * FROM "${name}"`).all()]));
+  const verify=async()=>{
+    const before=snapshot(),people=members(db,2026).filter(p=>p.active),options=matchingOptions(db,2026);
+    const response=await call('/admin/matching-test',{year:2026,showPairings:true,confirm:'REVEAL',draws:1000000},admin);
+    assert.equal(response.status,200);assert.equal(response.data.status,'passed');
+    assert.equal(response.data.checked,100);assert.equal(response.data.testDraws.length,100);
+    for(const pairs of response.data.testDraws){
+      assert.deepEqual(validateDraw(pairs,people.map(p=>p.id),options),[]);
+      assert.equal(pairs.length,9);assert.ok(pairs.every(p=>p.giver!==inactive.id&&p.recipient!==inactive.id));
+      assert.ok(!pairs.some(p=>p.giver===a.id&&p.recipient===b.id||p.giver===b.id&&p.recipient===a.id));
+      for(const pair of pairs)assert.deepEqual(Object.keys(pair).sort(),['giver','recipient']);
+    }
+    const text=JSON.stringify(response.data);
+    for(const p of people)for(const privateValue of [p.email,p.wishlist])assert.equal(text.includes(privateValue),false);
+    assert.equal(response.data.assignments,undefined);assert.equal(snapshot(),before);
+  };
+  await verify();draftDraw(db,2026);await verify();lockDraw(db,2026);prepareMail(db,config,2026,'assignment');await verify();
+});
+
+test('test pairings need deliberate organizer access and never expose invalid or impossible draws',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);
+  const body={year:2026,showPairings:true,confirm:'REVEAL'};
+  assert.equal((await call('/admin/matching-test',body)).status,403);
+  assert.equal((await call('/admin/matching-test',body,{...admin,csrf:'wrong'})).status,403);
+  assert.equal((await call('/admin/matching-test',body,{...admin,headers:{Origin:'https://attacker.test'}})).status,403);
+  const redeemed=await call('/redeem',{token:new URL(inviteLink(db,config,2026,members(db,2026)[0].id)).hash.slice(1)});
+  assert.equal((await call('/admin/matching-test',body,{cookie:redeemed.cookie,csrf:redeemed.data.csrf})).status,403);
+  const rejected=await call('/admin/matching-test',{year:2026,showPairings:true},admin);
+  assert.equal(rejected.status,400);assert.equal(rejected.data.testDraws,undefined);
+  const normal=await call('/admin/matching-test',{year:2026,showPairings:'true',confirm:'REVEAL'},admin);
+  assert.equal(normal.status,200);assert.equal(normal.data.testDraws,undefined);
+  const people=members(db,2026);
+  for(const p of people.slice(1))db.prepare('INSERT INTO exclusions(year,giver,recipient) VALUES (2026,?,?)').run(people[0].id,p.id);
+  const impossible=await call('/admin/matching-test',body,admin);
+  assert.equal(impossible.data.status,'impossible');assert.deepEqual(impossible.data.testDraws,[]);
+  createExchange(db,2027);
+  db.prepare('UPDATE enrollments SET active=0 WHERE year=2027').run();
+  const invalid=await call('/admin/matching-test',{...body,year:2027},admin);
+  assert.equal(invalid.data.status,'invalid');assert.deepEqual(invalid.data.testDraws,[]);
+});
+
 test('matching diagnostics report impossible rules and unconfirmed history without relaxing rules',async t=>{
   const {db,call,admin}=await fixture(t);seed(db,'provisional');
   const people=members(db,2026);

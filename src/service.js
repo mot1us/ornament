@@ -117,10 +117,10 @@ export function draftDraw(db, year) {
   });
 }
 
-export function matchingTest(db,year) {
+export function matchingTest(db,year,{includePairings=false}={}) {
   getExchange(db,year);
   const people=members(db,year).filter(p=>p.active).map(p=>p.id);
-  return {...testMatchmaking(people,matchingOptions(db,year)),year,history:historyReadiness(db,year)};
+  return {...testMatchmaking(people,matchingOptions(db,year),{includePairings}),year,history:historyReadiness(db,year)};
 }
 
 export function setParticipation(db,year,id,active) {

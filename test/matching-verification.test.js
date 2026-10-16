@@ -61,8 +61,9 @@ test('the diagnostic distinguishes impossible rules, invalid rosters, and unfini
   assert.equal(allowed.status,'passed');assert.equal(allowed.checked,100);
   assert.equal(testMatchmaking(['a','b'],{year:2026}).status,'invalid');
   for(const limits of [{budgetMs:0},{maxVisits:0}]) {
-    const limited=testMatchmaking(people,{year:2026},limits);
+    const limited=testMatchmaking(people,{year:2026},{...limits,includePairings:true});
     assert.equal(limited.status,'limited');assert.equal(limited.checked,0);
+    assert.deepEqual(limited.testDraws,[]);
     assert.match(limited.issues[0],/search limit/);
   }
 });

@@ -93,8 +93,15 @@ bounded search prevents a complex exchange from exhausting the server.
 **Draw → Test matchmaking** checks up to 100 temporary draws using the selected
 exchange's active participants and two preceding calendar years. Testing an
 older finalized draw also honors its saved original restrictions. The response
-contains counts and rule results only, never
-pairings, identities, wish lists, or email content. It does not save a draft,
+contains counts and rule results only by default. Select **Show test pairings**
+before testing to explicitly reveal the giver/recipient names for each validated
+test draw. The Test draw selector browses those temporary results; Hide test
+pairings removes them from the page and browser app state. Results are cleared
+when organizer data or the selected year changes. A failed or unfinished test
+only exposes draws that completed and passed validation; zero completed draws
+show no pairings. Test pairings are separate from the saved draft/final draw,
+which remains hidden. No wish lists, contact details, or email content are
+included in test responses. It does not save a draft,
 change a finalized draw, write database records, or prepare/send email.
 Incomplete or provisional history is flagged because only recorded matches can
 be checked. A passing test checks matching rules, not finalization readiness,
