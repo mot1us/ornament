@@ -19,7 +19,7 @@ export function checkEmailIdentity(db,email,id) {
 }
 const short = (value, limit) => String(value ?? '').trim().slice(0, limit);
 function cancelUnsentInvitation(db,year,id) {
-  db.prepare("UPDATE outbox SET status='cancelled',error='This person is not taking part this year.' WHERE year=? AND giver=? AND kind='invite' AND status IN ('pending','preview','failed')").run(year,id);
+  db.prepare("UPDATE outbox SET status='cancelled',error='This person is not taking part this year.' WHERE year=? AND giver=? AND (kind='invite' OR kind LIKE 'test-invite:%') AND status IN ('pending','preview','failed')").run(year,id);
 }
 export function giftList(input) {
   if (!Array.isArray(input) || input.length > 5) throw new Error('Add up to five gift ideas.');
@@ -141,18 +141,39 @@ export function invitationRecipients(db,year) {
 export function prepareInvitations(db,config,year,recipients) {
   mutable(db,year);
   const waiting=invitationRecipients(db,year);
-  if(!Array.isArray(recipients)||!recipients.length||recipients.length>50||new Set(recipients.map(p=>p?.id)).size!==recipients.length)throw new Error('Review the invitation recipients before sending.');
-  const people=recipients.map(recipient=>{
-    const person=waiting.find(p=>p.id===recipient?.id);
-    if(!person || normalizeEmail(recipient.email)!==normalizeEmail(person.email))throw new Error('The roster or invitation status changed. Review the recipients again.');
-    return person;
-  }),ids=people.map(p=>p.id);
-  if(people.some(p=>!emailValid(p.email)))throw new Error('Add a valid email address for each selected person.');
+  const people=reviewInvitationRecipients(waiting,recipients),ids=people.map(p=>p.id);
   prepareMail(db,config,year,'invite',ids);
   transaction(db,()=>{
     for(const id of ids)db.prepare("UPDATE outbox SET status='pending',error='' WHERE year=? AND giver=? AND kind='invite' AND status IN ('preview','cancelled')").run(year,id);
   });
   return ids;
+}
+
+function reviewInvitationRecipients(waiting,recipients) {
+  if(!Array.isArray(recipients)||!recipients.length||recipients.length>50||new Set(recipients.map(p=>p?.id)).size!==recipients.length)throw new Error('Review the invitation recipients before sending.');
+  const people=recipients.map(recipient=>{
+    const person=waiting.find(p=>p.id===recipient?.id);
+    if(!person || normalizeEmail(recipient.email)!==normalizeEmail(person.email))throw new Error('The roster or invitation status changed. Review the recipients again.');
+    return person;
+  });
+  if(people.some(p=>!emailValid(p.email)))throw new Error('Add a valid email address for each selected person.');
+  return people;
+}
+
+export function prepareTestInvitations(db,config,year,recipients) {
+  mutable(db,year);
+  const waiting=members(db,year).filter(p=>p.active&&!db.prepare(`SELECT id FROM outbox WHERE year=? AND giver=?
+    AND ((kind='invite' AND status IN ('sending','uncertain')) OR (kind LIKE 'test-invite:%' AND status IN ('pending','sending','uncertain')))` ).get(year,p.id));
+  const people=reviewInvitationRecipients(waiting,recipients);
+  return transaction(db,()=>{
+    const ids=people.map(person=>{
+      const id=randomUUID(),mail=makeEmail(db,config,year,person.id,'test-invite');
+      db.prepare('INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body) VALUES (?,?,?,?,?,?,?)').run(id,year,person.id,`test-invite:${id}`,mail.email,mail.subject,mail.body);
+      return id;
+    });
+    audit(db,'prepare-test-invitations',{year,count:ids.length});
+    return ids;
+  });
 }
 
 export function lockDraw(db,year) {
@@ -171,13 +192,14 @@ export function lockDraw(db,year) {
   });
 }
 
-export function inviteLink(db,config,year,personId) {
+export function inviteLink(db,config,year,personId,{freshStart=false}={}) {
   const person=members(db,year).find(p=>p.id===personId);
   if (!person?.active || !emailValid(person.email)) throw new Error('Choose an active person with a valid email address.');
   if (getExchange(db,year).state === 'archived') throw new Error('Historical exchanges do not issue access links.');
+  if(freshStart)mutable(db,year);
   const token = secret();
   db.prepare('DELETE FROM invite_tokens WHERE expires<=? OR (year=? AND person_id=?)').run(Date.now(),year,personId);
-  db.prepare('INSERT INTO invite_tokens(hash,year,person_id,expires,email) VALUES (?,?,?,?,?)').run(hash(token),year,personId,Date.now()+48*3600000,normalizeEmail(person.email));
+  db.prepare('INSERT INTO invite_tokens(hash,year,person_id,expires,email,fresh_start) VALUES (?,?,?,?,?,?)').run(hash(token),year,personId,Date.now()+48*3600000,normalizeEmail(person.email),freshStart?1:0);
   return `${config.publicUrl}/join#${token}`;
 }
 
@@ -186,10 +208,11 @@ export function makeEmail(db,config,year,personId,kind) {
   const person = members(db,year).find(p=>p.id===personId);
   if (!person?.active || !emailValid(person.email)) throw new Error('An active participant needs a valid email address.');
   if (kind === 'assignment' && exchange.state !== 'locked') throw new Error('Finalize the draw before preparing assignment emails.');
-  const link = kind==='invite'?inviteLink(db,config,year,personId):`${config.publicUrl}/join`;
+  const invitation=kind==='invite'||kind==='test-invite';
+  const link = invitation?inviteLink(db,config,year,personId,{freshStart:kind==='test-invite'}):`${config.publicUrl}/join`;
   const details = [exchange.budget && `Gift budget: ${exchange.budget}`, exchange.event_date && `Exchange date: ${exchange.event_date}`].filter(Boolean).join('\n');
-  if (kind === 'invite') return {email:person.email,subject:`Your invitation · ${exchange.title}`,
-    body:`Hi ${person.name},\n\nOur Secret Santa is getting started. Open your invitation to add your wish list and gift ideas:\n\n${link}\n\n${details}\n\nThis invitation works once and expires in 48 hours. Keep it private. If it expires, request a fresh sign-in link at ${config.publicUrl}/join.\n\nHappy gifting!`};
+  if (invitation) return {email:person.email,subject:`Your invitation · ${exchange.title}`,
+    body:`Hi ${person.name},\n\nOur Secret Santa is getting started. Open your invitation to add your wish list and gift ideas:\n\n${link}\n\n${details}\n\n${kind==='test-invite'?'This invitation opens an empty form. Your current wish list stays saved until you submit the new one.\n\n':''}This invitation works once and expires in 48 hours. Keep it private. If it expires, request a fresh sign-in link at ${config.publicUrl}/join.\n\nHappy gifting!`};
   const pair = db.prepare('SELECT recipient FROM assignments WHERE year=? AND giver=?').get(year,personId);
   const recipient = members(db,year).find(p=>p.id===pair.recipient);
   const gifts = recipient.gifts.map(g=>[g.label,g.url].filter(Boolean).join(': ')).join('\n');

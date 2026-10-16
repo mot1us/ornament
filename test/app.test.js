@@ -172,6 +172,112 @@ test('the simple invitation flow previews without sending, and member submission
   assert.equal((await call('/admin/invitations/send',{year:2026,confirm:'SEND',recipients},admin)).status,400);
   assert.equal(sends,0);
 });
+test('fresh test invitations reach selected existing members and open blank forms without clearing saved lists',async t=>{
+  const sent=[],transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+  const people=members(db,2026),recipients=people.slice(0,2).map(p=>({id:p.id,email:p.email}));
+  db.prepare("UPDATE enrollments SET message='Original private note',gifts=? WHERE year=2026 AND person_id=?").run(JSON.stringify([{label:'Original gift',url:'https://example.test/gift'}]),people[0].id);
+  prepareMail(db,config,2026,'invite');db.prepare("UPDATE outbox SET status='sent',sent_at='2026-01-01' WHERE kind='invite'").run();
+  db.prepare("INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body) VALUES ('other-pending',2026,?,'revision:pending',?,'Other','Private other content')").run(people[2].id,people[2].email);
+  const originalMail=db.prepare('SELECT * FROM outbox ORDER BY id').all(),originalLists=db.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all();
+  const history=db.prepare('SELECT * FROM assignments ORDER BY year,giver').all();
+  const request={year:2026,confirm:'TEST',recipients};
+  const result=await call('/admin/invitations/test',request,admin);
+  assert.equal(result.status,200);assert.equal(result.data.counts.sent,2);
+  assert.deepEqual(sent.map(mail=>mail.to).sort(),recipients.map(p=>p.email).sort());
+  for(const row of originalMail)assert.deepEqual(db.prepare('SELECT * FROM outbox WHERE id=?').get(row.id),row);
+  assert.deepEqual(db.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all(),originalLists);
+  assert.deepEqual(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all(),history);
+  const links=people.slice(0,2).map(p=>sent.find(mail=>mail.to===p.email).text.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0]);
+  assert.notEqual(links[0],links[1]);
+  for(const p of people.slice(0,2))assert.ok(db.prepare('SELECT expires,fresh_start FROM invite_tokens WHERE year=2026 AND person_id=?').get(p.id).expires>Date.now()+47*3600000);
+  const owner=authFrom(await call('/redeem',{token:new URL(links[0]).hash.slice(1)}));
+  assert.equal((await call('/redeem',{token:new URL(links[0]).hash.slice(1)})).status,401);
+  let profile=(await call('/member/profile',undefined,owner)).data;
+  assert.equal(profile.freshStart,true);assert.equal(profile.person.wishlist,'');assert.equal(profile.person.message,'');assert.deepEqual(profile.person.gifts,[]);
+  const original=members(db,2026).find(p=>p.id===people[0].id);
+  assert.equal(original.wishlist,'A book');assert.equal(original.message,'Original private note');
+  assert.equal((await call('/member/profile',{wishlist:'',gifts:[]},owner)).status,400);
+  assert.equal(members(db,2026).find(p=>p.id===people[0].id).wishlist,'A book');
+  assert.equal((await call('/member/profile',undefined,owner)).data.freshStart,true);
+  assert.equal((await call('/member/profile',{wishlist:'New private test list',message:'New private note',gifts:[]},owner)).status,200);
+  profile=(await call('/member/profile',undefined,owner)).data;
+  assert.equal(profile.freshStart,false);assert.equal(profile.person.wishlist,'New private test list');
+  assert.equal(members(db,2026).find(p=>p.id===people[1].id).wishlist,'A book');
+  const state=(await call('/admin/state?year=2026',undefined,admin)).data;
+  for(const privateText of ['New private test list','Original private note','New private note'])assert.equal(JSON.stringify(state).includes(privateText),false);
+  const firstTest=db.prepare("SELECT * FROM outbox WHERE kind LIKE 'test-invite:%' ORDER BY id").all();
+  assert.equal((await call('/admin/invitations/test',{...request,recipients:[recipients[0]]},admin)).status,200);
+  assert.equal(sent.length,3);assert.notEqual(sent[2].text.match(/\/join#[A-Za-z0-9_-]+/)[0],new URL(links[0]).pathname+new URL(links[0]).hash);
+  for(const row of firstTest)assert.deepEqual(db.prepare('SELECT * FROM outbox WHERE id=?').get(row.id),row);
+});
+
+test('fresh test invitation review enforces permissions, selected emails, uncertain-delivery review, and finalized protection',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db);
+  const people=members(db,2026),recipients=people.slice(0,2).map(p=>({id:p.id,email:p.email})),body={year:2026,confirm:'TEST',recipients};
+  assert.equal((await call('/admin/invitations/test',body)).status,403);
+  assert.equal((await call('/admin/invitations/test',body,{...admin,csrf:'wrong'})).status,403);
+  assert.equal((await call('/admin/invitations/test',body,{...admin,headers:{Origin:'https://example.test'}})).status,403);
+  assert.equal((await call('/admin/invitations/test',{...body,confirm:'SEND'},admin)).status,400);
+  assert.equal((await call('/admin/invitations/test',{...body,recipients:[]},admin)).status,400);
+  assert.equal((await call('/admin/invitations/test',{...body,recipients:[recipients[0],recipients[0]]},admin)).status,400);
+  assert.equal((await call('/admin/invitations/test',{...body,recipients:[{...recipients[0],email:'changed@example.test'}]},admin)).status,400);
+  for(const [kind,status] of [['invite','uncertain'],['test-invite:old','pending'],['test-invite:old','uncertain'],['test-invite:old','sending']]) {
+    db.prepare("INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body,status) VALUES ('blocked',2026,?,?,?,'Test','Private',?)").run(people[1].id,kind,people[1].email,status);
+    assert.equal((await call('/admin/invitations/test',body,admin)).status,400);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM outbox').get().n,1);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM invite_tokens').get().n,0);
+    assert.equal(db.prepare("SELECT status FROM outbox WHERE id='blocked'").get().status,status);
+    db.prepare("DELETE FROM outbox WHERE id='blocked'").run();
+  }
+  db.prepare('UPDATE enrollments SET active=0 WHERE year=2026 AND person_id=?').run(people[1].id);
+  assert.equal((await call('/admin/invitations/test',body,admin)).status,400);
+  db.prepare('UPDATE enrollments SET active=1 WHERE year=2026 AND person_id=?').run(people[1].id);
+  assert.equal((await call('/admin/invitations/test',body,admin)).status,200);
+  const mails=db.prepare("SELECT * FROM outbox WHERE kind LIKE 'test-invite:%' ORDER BY giver").all();
+  const owner=authFrom(await call('/redeem',{token:new URL(mails[0].body.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0]).hash.slice(1)}));
+  const unredeemed=new URL(mails[1].body.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0]).hash.slice(1);
+  const lists=db.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all();
+  db.prepare("UPDATE exchanges SET state='locked' WHERE year=2026").run();
+  assert.equal((await call('/admin/invitations/test',body,admin)).status,400);
+  assert.equal((await call('/redeem',{token:unredeemed})).status,401);
+  assert.equal((await call('/member/profile',undefined,owner)).status,403);
+  assert.equal((await call('/member/profile',{wishlist:'Should not replace',gifts:[]},owner)).status,403);
+  assert.equal((await call('/admin/mail/retry',{id:mails[0].id},admin)).status,400);
+  assert.deepEqual(db.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all(),lists);
+});
+
+test('fresh invitation previews send no email, expire, and only replace older access links for selected members',async t=>{
+  let sends=0;const transport={async sendMail(){sends++;throw Error('Preview must not use SMTP.');}};
+  const {db,config,call,admin}=await fixture(t,{transport});seed(db);
+  const people=members(db,2026),old=people.slice(0,2).map(p=>new URL(inviteLink(db,config,2026,p.id)).hash.slice(1));
+  const result=await call('/admin/invitations/test',{year:2026,confirm:'TEST',recipients:[{id:people[0].id,email:people[0].email}]},admin);
+  assert.equal(result.status,200);assert.equal(result.data.counts.preview,1);assert.equal(sends,0);
+  assert.equal((await call('/redeem',{token:old[0]})).status,401);
+  assert.equal((await call('/redeem',{token:old[1]})).status,200);
+  const mail=db.prepare("SELECT body FROM outbox WHERE kind LIKE 'test-invite:%'").get(),token=new URL(mail.body.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0]).hash.slice(1);
+  db.prepare('UPDATE invite_tokens SET expires=? WHERE person_id=?').run(Date.now()-1,people[0].id);
+  assert.equal((await call('/redeem',{token})).status,401);
+  assert.ok(members(db,2026).every(p=>p.wishlist==='A book'));
+});
+
+test('fresh invitation schema upgrade keeps existing links, sessions, saved content and delivery records',async t=>{
+  const {db,config,call,admin,dir}=await fixture(t);seed(db);const person=members(db,2026)[0];
+  prepareMail(db,config,2026,'invite');db.prepare("UPDATE outbox SET status='sent'").run();
+  const token=new URL(db.prepare("SELECT body FROM outbox WHERE giver=? AND kind='invite'").get(person.id).body.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0]).hash.slice(1);
+  db.exec('ALTER TABLE invite_tokens DROP COLUMN fresh_start; ALTER TABLE sessions DROP COLUMN fresh_start');
+  const snapshot=table=>db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all();
+  const before={tokens:snapshot('invite_tokens'),sessions:snapshot('sessions'),lists:snapshot('enrollments'),mail:snapshot('outbox')};
+  const upgraded=openDatabase(dir);try{
+    for(const [table,rows] of [['invite_tokens',before.tokens],['sessions',before.sessions]])assert.deepEqual(upgraded.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all().map(row=>{const {fresh_start,...rest}=row;assert.equal(fresh_start,0);return rest;}),rows.map(row=>({...row})));
+    assert.deepEqual(upgraded.prepare('SELECT * FROM enrollments ORDER BY rowid').all(),before.lists);
+    assert.deepEqual(upgraded.prepare('SELECT * FROM outbox ORDER BY rowid').all(),before.mail);
+  }finally{upgraded.close();}
+  assert.equal((await call('/admin/state?year=2026',undefined,admin)).status,200);
+  const owner=authFrom(await call('/redeem',{token}));
+  assert.equal((await call('/member/profile',undefined,owner)).data.freshStart,false);
+});
+
 test('artwork caching does not cache authenticated profiles or organizer data',async t=>{
   const {db,config,call,admin}=await fixture(t);seed(db);
   const artwork=readdirSync(new URL('../public/',import.meta.url)).filter(name=>name.endsWith('.webp'));

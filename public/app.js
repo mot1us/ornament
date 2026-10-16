@@ -1,4 +1,4 @@
-import { privatePeoplePanel, personChecks, privateSubmissionReview, revealConfirmation, responsiveTable, invitationCandidates, canInvite } from './organizer.js';
+import { privatePeoplePanel, personChecks, privateSubmissionReview, revealConfirmation, responsiveTable, invitationCandidates, canInvite, canTestInvite } from './organizer.js';
 import { matchingTestPanel } from './matching-test.js';
 const app=document.querySelector('#app');
 const dialog=document.querySelector('#dialog');
@@ -92,9 +92,13 @@ function personForm(person={}) {
   const title=person.id?(current?'Edit '+person.name:'Add '+person.name+' to '+state.year):'Add person to '+state.year;
   return `<h2>${esc(title)}</h2>${!person.id&&available.length?`<label>Saved family member<select id="existing-member-select"><option value="">Add someone new</option>${available.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></label>`:''}<form data-form="person"><input type="hidden" name="year" value="${state.year}"><input type="hidden" name="id" value="${esc(person.id||'')}"><label>Name<input name="name" required maxlength="80" value="${esc(person.name||'')}"></label><div data-existing-person hidden></div><label>Email<input type="email" name="email" value="${esc(person.email||'')}" placeholder="You can add this later"></label><details class="person-aliases"><summary>Other names</summary><label>Nicknames or previous names, separated by commas<input name="aliases" value="${esc((person.aliases||[]).join(', '))}"></label></details><label class="checkbox"><input type="checkbox" name="active" ${person.active===0?'':'checked'}>Taking part in ${state.year}</label><button class="primary">${current?'Save changes':'Add person'}</button></form>`;
 }
-function invitationDialog() {
-  const people=invitationCandidates(state),preview=state.emailMode==='preview';
-  return `<h2>Choose invitation recipients</h2><p>Choose just yourself and a partner for a test, or anyone you’re ready to invite. Everyone else can wait.</p>${preview?'<p class="callout">Preview mode is on. No emails will leave the app.</p>':'<p>Only the people you select will receive a private wish-list link.</p>'}<form data-form="invite-people"><input type="hidden" name="year" value="${state.year}"><input type="hidden" name="recipients" value="${esc(JSON.stringify(people.map(p=>({id:p.id,email:p.email}))))}"><fieldset class="invitation-selection"><legend>Recipients</legend><ul class="invitation-preview">${people.map(p=>`<li><label class="checkbox invitation-recipient"><input type="checkbox" name="recipient" value="${esc(p.id)}" ${canInvite(p)?'':'disabled'}><span><strong>${esc(p.name)}</strong><small>${canInvite(p)?esc(p.email):'Add an email address to invite'}</small></span></label></li>`).join('')}</ul></fieldset><p data-invitation-count role="status">0 selected</p><button class="primary" data-invitation-submit disabled>${preview?'Create invitation previews':'Send invitation emails'}</button></form>`;
+function invitationDialog({test=false}={}) {
+  const people=test?state.people.filter(p=>p.active):invitationCandidates(state),preview=state.emailMode==='preview';
+  const available=p=>test?canTestInvite(p,state):canInvite(p);
+  const title=test?'Test invitations':'Choose invitation recipients';
+  const description=test?'Send new unique links that open empty forms, even for people who already submitted. Their saved lists stay intact until they submit the new forms.':'Choose who to invite now. Everyone else can wait.';
+  const submit=test?(preview?'Create fresh test previews':'Send fresh test invitations'):(preview?'Create invitation previews':'Send invitation emails');
+  return `<h2>${title}</h2><p>${description}</p>${preview?'<p class="callout">Preview mode is on. No emails will leave the app.</p>':'<p>Only the people you select will receive a private wish-list link.</p>'}<form data-form="invite-people"><input type="hidden" name="mode" value="${test?'test':'send'}"><input type="hidden" name="year" value="${state.year}"><input type="hidden" name="recipients" value="${esc(JSON.stringify(people.map(p=>({id:p.id,email:p.email}))))}"><fieldset class="invitation-selection"><legend>Recipients</legend><ul class="invitation-preview">${people.map(p=>`<li><label class="checkbox invitation-recipient"><input type="checkbox" name="recipient" value="${esc(p.id)}" ${available(p)?'':'disabled'}><span><strong>${esc(p.name)}</strong><small>${available(p)?esc(p.email):!canInvite(p)?'Add an email address to invite':'Review pending or uncertain invitations in Delivery first'}</small></span></label></li>`).join('')}</ul></fieldset><p data-invitation-count role="status">0 selected</p><button class="primary" data-invitation-submit disabled>${submit}</button></form>`;
 }
 
 function rulesPanel() {
@@ -118,7 +122,7 @@ function historyForm() {
 function emailPanel() {
   return `<div class="section-heading"><div><h2>Delivery</h2><p>Invitation and match email records.</p></div>${badge(state.emailMode==='preview'?'Preview mode':'SMTP mode',state.emailMode==='preview'?'amber':'green')}</div>${state.emailMode==='preview'?'<p class="callout">Preview mode is on. Messages are stored here, and no emails leave the app.</p>':!state.smtpReady?'<p class="callout">SMTP is not configured. Add the server email settings before sending.</p>':''}<div class="email-actions"><button class="secondary" data-action="prepare-matches" ${state.exchange.state==='locked'?'':'disabled'}>Prepare assignment emails</button><button class="primary" data-action="send" ${state.outbox.some(p=>p.status==='pending'&&!p.kind.startsWith('signin:'))?'':'disabled'}>${state.emailMode==='preview'?'Mark pending messages as previewed':'Send pending emails'}</button></div>${state.outbox.length?responsiveTable(['To','Message','Status','Actions'],state.outbox.map(mail=>[
     `<strong>${esc(personName(mail.giver))}</strong><small class="block muted">${esc(mail.recipient_email)}</small>`,
-    `${mail.kind.startsWith('signin:')?'Sign-in link':mail.kind==='invite'?'Wish-list invitation':mail.kind.startsWith('revision:')?'Update request':'Assignment'}${mail.error?`<small class="block inline-error">${esc(mail.error)}</small>`:''}`,
+    `${mail.kind.startsWith('signin:')?'Sign-in link':mail.kind==='invite'?'Wish-list invitation':mail.kind.startsWith('test-invite:')?'Fresh test invitation':mail.kind.startsWith('revision:')?'Update request':'Assignment'}${mail.error?`<small class="block inline-error">${esc(mail.error)}</small>`:''}`,
     badge(mail.status,mail.status==='sent'?'green':['failed','uncertain'].includes(mail.status)?'amber':''),
     `<button class="quiet" data-action="preview-email" data-id="${mail.id}">Reveal preview</button>${!mail.kind.startsWith('signin:')&&['failed','preview','uncertain'].includes(mail.status)?`<button class="quiet" data-action="retry-email" data-id="${mail.id}">${mail.status==='preview'?'Queue for sending':'Review & retry'}</button>`:''}`
   ]),'Email delivery'):'<div class="empty">No messages yet. Send invitations from People.</div>'}<p class="section-note">“Sent” means your mail server accepted the message. It does not guarantee delivery to the inbox. An interrupted send is marked uncertain and requires review before retrying.</p>`;
@@ -171,7 +175,7 @@ function renderMember() {
   const editable=e.state!=='archived'&&p.active;
   const editing=editable&&(familyEditing||(!p.wishlist&&!p.gifts.length));
 
-  app.innerHTML=`<section class="family-page">${familyHeading(e,editing?'Your Christmas<br>wish list.':wishListSubmitted(p,'wishlist')?(familyUpdated?'Changes saved.':'Sent to Santa.'):'Your wish list.',!p.active?'You’re sitting out this year.':editing?'Add gift ideas, product links, and a message for your Secret Santa.':r?'View your match below.':'We’ll email your match after the draw.',!editing&&!!(p.wishlist||p.gifts.length))}<div class="family-content">${p.changesRequested?`<p class="callout" role="status">Your organizer requested an update: ${esc(p.changesRequested)}</p>`:''}${recipientCard(r)}${editing?wishListForm(p,'wishlist'):wishListSummary(p,{editable})}</div></section>`;
+  app.innerHTML=`<section class="family-page">${familyHeading(e,editing?'Your Christmas<br>wish list.':wishListSubmitted(p,'wishlist')?(familyUpdated?'Changes saved.':'Sent to Santa.'):'Your wish list.',!p.active?'You’re sitting out this year.':member.freshStart?'This invitation starts an empty list. Submitting it replaces your saved list.':editing?'Add gift ideas, product links, and a message for your Secret Santa.':r?'View your match below.':'We’ll email your match after the draw.',!editing&&!!(p.wishlist||p.gifts.length))}<div class="family-content">${p.changesRequested?`<p class="callout" role="status">Your organizer requested an update: ${esc(p.changesRequested)}</p>`:''}${recipientCard(r)}${editing?wishListForm(p,'wishlist'):wishListSummary(p,{editable})}</div></section>`;
 }
 function renderFamily() {if(session?.role==='member')renderMember();else renderGroup();}
 function formGifts(form) {
@@ -235,6 +239,7 @@ document.addEventListener('click',async event=>{
     if(action==='new-year'){showDialog('<h2>New year</h2>'+newYearForm());return;}
     if(action==='use-person'){showDialog(personForm(state.people.find(p=>p.id===id)||state.identities.find(p=>p.id===id)));return;}
     if(action==='invite-people'){showDialog(invitationDialog());return;}
+    if(action==='test-invitations'){showDialog(invitationDialog({test:true}));return;}
     if(action==='remove-person'){showDialog(`<h2>Leave ${esc(personName(id))} out of ${state.year}?</h2><p>They will not be included in this year’s draw or invitation batch. Their saved list and past history are kept.</p><form data-form="participation"><input type="hidden" name="year" value="${state.year}"><input type="hidden" name="id" value="${esc(id)}"><input type="hidden" name="active" value="false"><button class="primary">Leave out this year</button></form>`);return;}
 
     if(action==='add-person'||action==='edit-person'){showDialog(personForm(state.people.find(p=>p.id===id)));return;}
@@ -313,10 +318,11 @@ document.addEventListener('submit',async event=>{
       const selected=new Set(new FormData(form).getAll('recipient'));
       const recipients=JSON.parse(values.recipients).filter(p=>selected.has(p.id));
       if(!recipients.length)throw new Error('Choose at least one person to invite.');
-      const result=await api('/admin/invitations/send',{year:Number(values.year),confirm:'SEND',recipients});
+      const test=values.mode==='test';
+      const result=await api(`/admin/invitations/${test?'test':'send'}`,{year:Number(values.year),confirm:test?'TEST':'SEND',recipients});
       dialog.close();await loadAdmin();
       const issues=result.counts.failed+result.counts.uncertain;
-      notice(issues?`${result.counts.sent} invitations sent; ${issues} delivery issues. Review Delivery.`:state.emailMode==='preview'?`${result.counts.preview} invitation previews created. No emails sent.`:`${result.counts.sent} invitation emails sent.`,!!issues);return;
+      notice(issues?`${result.counts.sent} invitations sent; ${issues} delivery issues. Review Delivery.`:state.emailMode==='preview'?`${result.counts.preview} ${test?'fresh test ':''}invitation previews created. No emails sent.`:`${result.counts.sent} ${test?'fresh test ':''}invitation emails sent.`,!!issues);return;
     }
     if(type==='contact')await api('/admin/contact',{...values,year:state.year});
     if(type==='settings')await api('/admin/settings',{...values,year:state.year,noReciprocal:form.elements.noReciprocal.checked});

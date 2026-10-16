@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { openDatabase, audit, getExchange, members, transaction, importHistory } from './database.js';
 import { createExchange, savePerson, emailValid, matchingOptions, historyReadiness, mutable, invalidateDraft, draftDraw,
-  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest, setParticipation, prepareInvitations } from './service.js';
+  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest, setParticipation, prepareInvitations, prepareTestInvitations } from './service.js';
 import { secret, hash, passwordMatches, readConfig } from './security.js';
 import { createMailer } from './mail.js';
 import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
@@ -41,11 +41,11 @@ export function createApp(config,db,providedTransport) {
   });
   const fail = (res,error,status=400)=>res.status(status).json({error:error.message});
   const sessionCookie = (res, token, maxAge)=>res.cookie('santa_session',token,{httpOnly:true,secure:config.secure,sameSite:'strict',path:'/',maxAge});
-  const makeSession = (res,role,personId=null,year=null)=>{
+  const makeSession = (res,role,personId=null,year=null,freshStart=false)=>{
     const token = secret(), csrf = secret(), duration = role==='admin' ? 8*3600000 : 30*86400000;
     db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());
     db.prepare('DELETE FROM invite_tokens WHERE expires<?').run(Date.now());
-    db.prepare('INSERT INTO sessions(hash,role,csrf,person_id,year,expires) VALUES (?,?,?,?,?,?)').run(hash(token),role,csrf,personId,year,Date.now()+duration);
+    db.prepare('INSERT INTO sessions(hash,role,csrf,person_id,year,expires,fresh_start) VALUES (?,?,?,?,?,?,?)').run(hash(token),role,csrf,personId,year,Date.now()+duration,freshStart?1:0);
     sessionCookie(res,token,duration);
     return {role,csrf,year};
   };
@@ -94,11 +94,12 @@ export function createApp(config,db,providedTransport) {
       const tokenHash=hash(token);
       const invite=consumeSignIn(db,tokenHash) || db.prepare(`SELECT t.* FROM invite_tokens t JOIN people p ON p.id=t.person_id
         JOIN enrollments e ON e.person_id=t.person_id AND e.year=t.year JOIN exchanges x ON x.year=t.year
-        WHERE t.hash=? AND t.expires>? AND t.email=lower(trim(p.email)) AND e.active=1 AND x.state IN ('open','drafted','locked')`).get(tokenHash,Date.now());
+        WHERE t.hash=? AND t.expires>? AND t.email=lower(trim(p.email)) AND e.active=1 AND x.state IN ('open','drafted','locked')
+        AND (t.fresh_start=0 OR x.state IN ('open','drafted'))`).get(tokenHash,Date.now());
       if (!invite) return null;
       db.prepare('DELETE FROM invite_tokens WHERE hash=?').run(tokenHash);
       if (req.session) db.prepare('DELETE FROM sessions WHERE hash=?').run(req.session.hash);
-      return makeSession(res,'member',invite.person_id,invite.year);
+      return makeSession(res,'member',invite.person_id,invite.year,Boolean(invite.fresh_start));
     });
     if (!result) return res.status(401).json({error:'This link is invalid or expired. Request a new link from the homepage.'});
     res.json(result);
@@ -247,6 +248,18 @@ export function createApp(config,db,providedTransport) {
     }
     res.json({count:ids.length,counts});
   });
+  app.post('/api/admin/invitations/test',async(req,res)=>{
+    if(req.body.confirm!=='TEST')throw new Error('Confirm sending fresh test invitations.');
+    if(config.emailMode==='smtp'&&!mailer.ready)throw new Error('Configure SMTP before sending invitation emails.');
+    const year=Number(req.body.year),mailIds=prepareTestInvitations(db,config,year,req.body.recipients);
+    await mailer.deliver(year,{mailIds});
+    const counts={sent:0,preview:0,failed:0,uncertain:0};
+    for(const id of mailIds) {
+      const row=db.prepare('SELECT status FROM outbox WHERE id=?').get(id);
+      if(row?.status in counts)counts[row.status]++;
+    }
+    res.json({count:mailIds.length,counts});
+  });
   app.post('/api/admin/contact',(req,res)=>{
     const year=Number(req.body.year),id=req.body.id,email=normalizeEmail(req.body.email);
     if(!emailValid(email)||!db.prepare('SELECT person_id FROM enrollments WHERE year=? AND person_id=?').get(year,id))throw new Error('Choose an existing person and enter a valid email address.');
@@ -318,6 +331,7 @@ export function createApp(config,db,providedTransport) {
   app.post('/api/admin/mail/retry',(req,res)=>{
     const row = db.prepare('SELECT * FROM outbox WHERE id=?').get(req.body.id);
     if (row?.kind.startsWith('signin:')) throw new Error('Request a new sign-in link from the homepage.');
+    if(row?.kind.startsWith('test-invite:'))mutable(db,row.year);
     if (!row || !['failed','preview','uncertain'].includes(row.status)) throw new Error('Only failed, previewed, or reviewed uncertain messages can be retried.');
     if (row.status==='uncertain' && req.body.confirm!=='CHECKED') throw new Error('Confirm you checked the mailbox before retrying this uncertain email.');
     const person=db.prepare('SELECT email FROM people WHERE id=?').get(row.giver);
@@ -349,6 +363,7 @@ export function createApp(config,db,providedTransport) {
     if (req.session?.role!=='member') return res.status(403).json({error:'Sign in from the homepage.'});
     if(!db.prepare(`SELECT 1 FROM enrollments e JOIN exchanges x ON x.year=e.year WHERE e.year=? AND e.person_id=?
       AND e.active=1 AND x.state IN ('open','drafted','locked')`).get(req.session.year,req.session.person_id))return res.status(403).json({error:'Your participation is no longer active. Ask the organizer.'});
+    if(req.session.fresh_start&&!['open','drafted'].includes(getExchange(db,req.session.year).state))return res.status(403).json({error:'The draw has been finalized. Sign in normally to open your saved list.'});
     next();
   });
   app.get('/api/member/profile',(req,res)=>{
@@ -363,8 +378,9 @@ export function createApp(config,db,providedTransport) {
       const target = pair && all.find(p=>p.id===pair.recipient);
       if (target) recipient={name:target.name,wishlist:target.wishlist,message:target.message,gifts:target.gifts};
     }
-    res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state},
-      person:{name:person.name,active:Boolean(person.active),wishlist:person.wishlist,message:person.message,gifts:person.gifts,changesRequested:person.changes_requested},recipient});
+    const freshStart=Boolean(req.session.fresh_start);
+    res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state},freshStart,
+      person:{name:person.name,active:Boolean(person.active),wishlist:freshStart?'':person.wishlist,message:freshStart?'':person.message,gifts:freshStart?[]:person.gifts,changesRequested:freshStart?'':person.changes_requested},recipient});
   });
   app.post('/api/member/profile',submissionLimiter,(req,res)=>{
     const {year,person_id:id}=req.session;
@@ -375,6 +391,7 @@ export function createApp(config,db,providedTransport) {
     const content=checkedWishlist(req.body,email),{wishlist,message}=content,gifts=JSON.stringify(content.gifts);
     transaction(db,()=>{
       db.prepare('UPDATE enrollments SET wishlist=?,message=?,gifts=? WHERE year=? AND person_id=?').run(wishlist,message,gifts,year,id);
+      db.prepare("UPDATE sessions SET fresh_start=0 WHERE role='member' AND year=? AND person_id=?").run(year,id);
       clearChangesRequest(db,year,id);
       db.prepare("UPDATE submissions SET wishlist=?,message=?,gifts=?,updated_at=CURRENT_TIMESTAMP WHERE year=? AND person_id=? AND status='approved'").run(wishlist,message,gifts,year,id);
       audit(db,'save-wishlist',{year,id});

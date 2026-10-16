@@ -16,9 +16,9 @@ export function createMailer(db,config,providedTransport) {
       return;
     }
     if (!transport) throw new Error('Configure SMTP before sending real email.');
-    if (row.kind==='invite') {
+    if (row.kind==='invite'||row.kind.startsWith('test-invite:')) {
       // Start the invitation lifetime at dispatch, including reviewed retries.
-      const current=makeEmail(db,config,row.year,row.giver,'invite');
+      const current=makeEmail(db,config,row.year,row.giver,row.kind==='invite'?'invite':'test-invite');
       db.prepare('UPDATE outbox SET body=?,subject=?,recipient_email=? WHERE id=? AND status=\'pending\'').run(current.body,current.subject,current.email,row.id);
       row={...row,body:current.body,subject:current.subject,recipient_email:current.email};
     }
@@ -50,13 +50,13 @@ export function createMailer(db,config,providedTransport) {
       const row=db.prepare("SELECT * FROM outbox WHERE id=? AND kind LIKE 'signin:%' AND status='pending'").get(id);
       if (row) await deliverRow(row);
     },
-    async deliver(year,{kind,ids}={}) {
+    async deliver(year,{kind,ids,mailIds}={}) {
       if (busy) throw new Error('An email batch is already running.');
       if (config.emailMode === 'smtp' && !transport) throw new Error('Configure SMTP before sending real email.');
       busy = true;
       try {
-        const rows = db.prepare("SELECT * FROM outbox WHERE year=? AND status='pending' AND (kind IN ('invite','assignment') OR kind LIKE 'revision:%') ORDER BY id").all(year)
-          .filter(row=>(!kind||row.kind===kind)&&(!ids||ids.includes(row.giver)));
+        const rows = db.prepare("SELECT * FROM outbox WHERE year=? AND status='pending' AND (kind IN ('invite','assignment') OR kind LIKE 'revision:%' OR kind LIKE 'test-invite:%') ORDER BY id").all(year)
+          .filter(row=>(!kind||row.kind===kind)&&(!ids||ids.includes(row.giver))&&(!mailIds||mailIds.includes(row.id)));
         for (const row of rows) {
           await deliverRow(row);
         }

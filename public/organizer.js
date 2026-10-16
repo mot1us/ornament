@@ -14,6 +14,8 @@ export function invitationCandidates(state) {
   return state.people.filter(p=>p.active&&!p.validation.submitted&&['pending','preview','cancelled','new'].includes(state.outbox.find(m=>m.kind==='invite'&&m.giver===p.id)?.status||'new'));
 }
 export const canInvite=person=>Boolean(person.validation.checks.find(check=>check.key==='email')?.passed);
+export const canTestInvite=(person,state)=>canInvite(person)&&!state.outbox.some(mail=>mail.giver===person.id&&
+  (mail.kind==='invite'&&['sending','uncertain'].includes(mail.status)||mail.kind.startsWith('test-invite:')&&['pending','sending','uncertain'].includes(mail.status)));
 export function privatePeoplePanel(state) {
   const mutable=['open','drafted'].includes(state.exchange.state);
   const pending=state.submissions.filter(p=>p.status==='pending'),active=state.people.filter(p=>p.active),inactive=state.people.filter(p=>!p.active);
@@ -27,7 +29,7 @@ export function privatePeoplePanel(state) {
       mutable?`<button class="secondary" data-action="edit-person" data-id="${esc(p.id)}">Edit</button><button class="quiet" data-action="${p.active?'remove-person':'include-person'}" data-id="${esc(p.id)}">${p.active?'Leave out':'Include'}</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${esc(p.id)}">Update email</button>`:''
     ];
   }),'Family members');
-  return `<div class="section-heading"><div><h2>People for ${esc(state.year)}</h2><p>Add people, send invitations, then watch their lists arrive.</p></div>${mutable?'<div class="people-actions"><button class="primary" data-action="invite-people" '+(!hasRecipients?'disabled':'')+'>Send invitations</button><button class="secondary" data-action="add-person">+ Add person</button></div>':''}</div>
+  return `<div class="section-heading"><div><h2>People for ${esc(state.year)}</h2><p>Add people, send invitations, then watch their lists arrive.</p></div>${mutable?'<div class="people-actions"><button class="primary" data-action="invite-people" '+(!hasRecipients?'disabled':'')+'>Send invitations</button><button class="secondary" data-action="add-person">+ Add person</button><button class="quiet" data-action="test-invitations" '+(!active.some(p=>canTestInvite(p,state))?'disabled':'')+'>Test invitations</button></div>':''}</div>
     ${mutable&&missingEmail?`<p class="callout">${missingEmail} ${missingEmail===1?'person still needs an email address':'people still need email addresses'}. ${hasRecipients?'You can invite other people now.':'Add an email address to enable invitations.'}</p>`:''}
     <p class="privacy-note"><span aria-hidden="true">✉</span> You can see who submitted. Wish lists and messages stay hidden until you choose to reveal them.</p>
     ${active.length?table(active):'<div class="empty">Add or include family members to get started.</div>'}

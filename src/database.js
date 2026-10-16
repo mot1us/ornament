@@ -82,6 +82,9 @@ export function openDatabase(dataDir) {
     });
   }
   db.exec('CREATE TABLE IF NOT EXISTS sign_in_events (created_at INTEGER NOT NULL)');
+  for(const table of ['invite_tokens','sessions']) {
+    if(!db.prepare(`PRAGMA table_info(${table})`).all().some(column=>column.name==='fresh_start'))db.exec(`ALTER TABLE ${table} ADD COLUMN fresh_start INTEGER NOT NULL DEFAULT 0`);
+  }
   // An interrupted SMTP transaction may have succeeded. Never automatically resend it.
   db.prepare("UPDATE outbox SET status='uncertain', error='Sending was interrupted. Check the recipient mailbox before retrying.' WHERE status='sending'").run();
   if(!db.prepare('SELECT name FROM schema_migrations WHERE name=?').get('automatic-roster-v1')) {

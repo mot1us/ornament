@@ -33,6 +33,22 @@ again by this action. Assignment, correction, and sign-in messages are not sent
 by this invitation-only action. Preview mode labels records as Preview only and
 sends no email. SMTP success means the provider accepted the email.
 
+Test invitations is a separate explicit action for open or drafted exchanges.
+It can include already-invited or submitted active members, selected one by one.
+Each dispatch has a new delivery record and a unique, email-bound, single-use
+48-hour invitation. The link opens an empty first-submission form in a fresh-start
+member session. Opening or reloading this form does not change the saved list,
+participation, history, or previous successful email records. A valid submission
+replaces only that member's current list, message, and gift ideas and returns to
+the normal saved-list/edit flow. Normal sign-in continues to show the saved list.
+Missing details for unselected people do not block a test. Pending test sends,
+in-flight invitations, and uncertain deliveries must be resolved before another
+test for that person. Finalized exchanges reject new fresh test invitations and
+cannot be overwritten by previously issued fresh links or fresh-start sessions.
+Old invitation links for the selected person are replaced, as with normal
+invitation issuance. Test messages are delivered only for the reviewed batch;
+assignment and other pending messages are untouched.
+
 Each year has independent settings, exclusions, and assignments. The latest two
 calendar years' giver-to-recipient edges are excluded even if their history is
 still provisional. A draw can be drafted with incomplete history but cannot be
