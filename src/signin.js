@@ -34,8 +34,8 @@ export function prepareSignIn(db,config,input,now=Date.now()) {
     const token=secret(),id=randomUUID();
     const link=`${config.publicUrl}/join#${token}`;
     db.prepare('INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body) VALUES (?,?,?,?,?,?,?)').run(
-      id,exchange.year,person.id,`signin:${id}`,person.email,`Sign in to Ornament · ${exchange.title}`,
-      `Hi ${person.name},\n\nOpen your wish list and Secret Santa match:\n\n${link}\n\nThis link expires in 15 minutes and works once. Keep it private.\n\nIf you didn't request it, you can ignore this email.`);
+      id,exchange.year,person.id,`signin:${id}`,person.email,`${exchange.title}: sign in to your wish list`,
+      `Hi ${person.name},\n\nYou requested a sign-in link for ${exchange.title} on Ornament. Use it to open your wish list and, after the draw, your Secret Santa match:\n\n${link}\n\nThis personal link works once and is valid for 15 minutes. Keep it private. If you didn't request it, you can ignore this email.\n\nSent by Ornament for ${exchange.title}.`);
     db.prepare('INSERT INTO sign_in_tokens(hash,year,person_id,email,mail_id,expires) VALUES (?,?,?,?,?,?)').run(
       hash(token),exchange.year,person.id,email,id,now+15*60000);
     return id;

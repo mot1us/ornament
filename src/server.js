@@ -181,7 +181,7 @@ export function createApp(config,db,providedTransport) {
       db.prepare('UPDATE enrollments SET changes_requested=? WHERE year=? AND person_id=?').run(note,year,person.id);
       const id=randomUUID();
       db.prepare('INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body) VALUES (?,?,?,?,?,?,?)').run(id,year,person.id,`revision:${id}`,person.email,
-        `Update your wish list · ${exchange.title}`,`Hi ${person.name},\n\nYour organizer asked for an update:\n\n${note}\n\nOpen Ornament to edit and submit your wish list again:\n${config.publicUrl}/join\n\nYour sign-in email works once and expires in 15 minutes.`);
+        `${exchange.title}: update your wish list`,`Hi ${person.name},\n\nYour organizer for ${exchange.title} asked for an update to your wish list:\n\n${note}\n\nOpen Ornament and request a sign-in email to edit and submit your wish list again:\n${config.publicUrl}/join\n\nYour sign-in email works once and is valid for 15 minutes.\n\nSent by Ornament for ${exchange.title}.`);
       audit(db,'request-wishlist-changes',{year,personId:person.id});
     });res.json({ok:true});
   });

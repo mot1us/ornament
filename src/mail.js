@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { escapeHtml } from './security.js';
+import { emailHtml, emailSender } from './email-format.js';
 import { audit } from './database.js';
 import { validSignIn, expireSignIns } from './signin.js';
 import { makeEmail } from './service.js';
@@ -25,8 +25,8 @@ export function createMailer(db,config,providedTransport) {
     const claimed = db.prepare("UPDATE outbox SET status='sending',attempts=attempts+1 WHERE id=? AND status='pending'").run(row.id);
     if (!claimed.changes) return;
     try {
-      const result = await transport.sendMail({from:config.smtp.from,to:row.recipient_email,subject:row.subject,text:row.body,
-        html:`<div style="font-family:system-ui;line-height:1.7;white-space:pre-wrap">${escapeHtml(row.body)}</div>`,
+      const result = await transport.sendMail({from:emailSender(config.smtp.from),to:row.recipient_email,subject:row.subject,text:row.body,
+        html:emailHtml(row.subject,row.body),headers:{'Auto-Submitted':'auto-generated'},
         messageId:`<${row.id}@${new URL(config.publicUrl).hostname}>`});
       if (Array.isArray(result.rejected) && result.rejected.length) {
         db.prepare("UPDATE outbox SET status='failed',error='The mail server rejected this address.' WHERE id=?").run(row.id);

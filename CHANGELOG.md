@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2
+
+- Give invitations, sign-ins, correction requests, and matches exchange-specific subjects and clear context. Use a recognizable default sender name while preserving the approved mailbox and custom identities.
+- Render lightweight HTML letters with working visible links alongside plain text, escape member content, and identify automatic messages. Preserve access tokens, delivery records, and reviewed retry handling; no SMTP or Compose configuration change is required.
+
 ## 0.10.1
 
 - Add optional named results for every validated matchmaking test draw, with a draw selector and hide action. Keep normal diagnostics private and preserve real draws, wish lists, history, and email records.

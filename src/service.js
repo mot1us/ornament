@@ -214,14 +214,14 @@ export function makeEmail(db,config,year,personId,kind) {
   const invitation=kind==='invite'||kind==='test-invite';
   const link = invitation?inviteLink(db,config,year,personId,{freshStart:kind==='test-invite'}):`${config.publicUrl}/join`;
   const details = [exchange.budget && `Gift budget: ${exchange.budget}`, exchange.event_date && `Exchange date: ${exchange.event_date}`].filter(Boolean).join('\n');
-  if (invitation) return {email:person.email,subject:`Your invitation · ${exchange.title}`,
-    body:`Hi ${person.name},\n\nOur Secret Santa is getting started. Open your invitation to add your wish list and gift ideas:\n\n${link}\n\n${details}\n\n${kind==='test-invite'?'This invitation opens an empty form. Your current wish list stays saved until you submit the new one.\n\n':''}This invitation works once and expires in 48 hours. Keep it private. If it expires, request a fresh sign-in link at ${config.publicUrl}/join.\n\nHappy gifting!`};
+  if (invitation) return {email:person.email,subject:`${exchange.title}: your wish list invitation`,
+    body:`Hi ${person.name},\n\nYour organizer invited you to ${exchange.title} on Ornament, our Secret Santa app. Add your wish list, a message to your gifter, and any gift ideas using your invitation:\n\n${link}\n\n${details}\n\n${kind==='test-invite'?'This invitation opens an empty form. Your current wish list stays saved until you submit the new one.\n\n':''}Your personal invitation works once and is valid for 48 hours. Keep it private. You can return later to edit your list by requesting a sign-in email here:\n${config.publicUrl}/join\n\nSent by Ornament for ${exchange.title}.`};
   const pair = db.prepare('SELECT recipient FROM assignments WHERE year=? AND giver=?').get(year,personId);
   const recipient = members(db,year).find(p=>p.id===pair.recipient);
   const gifts = recipient.gifts.map(g=>[g.label,g.url].filter(Boolean).join(': ')).join('\n');
   const message=recipient.message?`Message to you:\n${recipient.message}\n\n`:'';
-  return {email:person.email,subject:`Your Secret Santa match · ${exchange.title}`,
-    body:`Hi ${person.name},\n\nYou are ${recipient.name}'s Secret Santa!\n\n${details}\n\nTheir wish list:\n${recipient.wishlist || 'They have not added a wish list yet.'}\n\n${message}${gifts}\n\nTo see the latest wish list, sign in with your email:\n${link}\n\nKeep your match secret.\n\nHappy gifting!`};
+  return {email:person.email,subject:`${exchange.title}: your Secret Santa match`,
+    body:`Hi ${person.name},\n\nThe draw for ${exchange.title} is complete. You are ${recipient.name}'s Secret Santa!\n\n${details}\n\nTheir wish list:\n${recipient.wishlist || 'They have not added a wish list yet.'}\n\n${message}${gifts}\n\nTo see the latest wish list, sign in to Ornament with your email:\n${link}\n\nKeep your match secret.\n\nSent by Ornament for ${exchange.title}.`};
 }
 
 export function prepareMail(db,config,year,kind,ids) {

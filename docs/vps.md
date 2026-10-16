@@ -98,6 +98,21 @@ emails. Message content is hidden until you confirm **Reveal preview**. They inc
 links. The SMTP relay and recipients' mail providers process those contents.
 The app does not install a VPS mail server.
 
+Outgoing emails identify the exchange in their subjects and explain why the
+recipient is receiving them. They include plain text and lightweight HTML with
+visible, clickable links, without remote images or tracking. A bare `SMTP_FROM`
+address or the default `Ornament` display name becomes `Ornament Secret Santa`;
+the approved mailbox stays the same and a custom display name is preserved.
+Existing SMTP settings work without a Compose or environment change.
+
+These improvements do not guarantee inbox placement. Keep SPF, DKIM, and DMARC
+configured with your relay; reputation and the recipient provider's filters
+also affect spam placement. See
+[Google's sender guidance](https://support.google.com/mail/answer/81126?hl=en)
+and [Oracle's deliverability guidance](https://docs.oracle.com/en-us/iaas/Content/Email/Reference/deliverabilitybestpractices_topic-bestpractices.htm).
+SMTP acceptance still means `sent`, not proof of inbox placement. An update
+does not resend existing successful messages or retry uncertain deliveries.
+
 Preview messages are never sent automatically. Optional email sign-in at
 `/join` sends requested links immediately in SMTP mode, without sending any
 invitation or assignment batch. In preview mode, find these links in

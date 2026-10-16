@@ -14,6 +14,7 @@ import { createMailer } from '../src/mail.js';
 import { prepareSignIn, expireSignIns } from '../src/signin.js';
 import { hash } from '../src/security.js';
 import { validateWishlist } from '../src/validation.js';
+import nodemailer from 'nodemailer';
 
 async function fixture(t,{emailMode='preview',transport}={}) {
   const dir=mkdtempSync(join(tmpdir(),'santa-test-'));
@@ -590,6 +591,53 @@ function authFrom(response) {
   return {cookie:response.cookie,csrf:response.data.csrf};
 }
 
+test('invites, sign-ins, correction requests and matches compile into private, contextual multipart emails without SMTP',async t=>{
+  const sent=[],compiled=[];
+  const stream=nodemailer.createTransport({streamTransport:true,buffer:true,newline:'windows'});
+  const transport={async sendMail(mail){sent.push(mail);const result=await stream.sendMail(mail);compiled.push(result);return result;}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);
+  config.smtp.from='Ornament <sender@example.test>';
+  const person=members(db,2026)[0],exchange=db.prepare('SELECT title FROM exchanges WHERE year=2026').get();
+  const mailer=createMailer(db,config,transport);
+  prepareMail(db,config,2026,'invite',[person.id]);await mailer.deliver(2026);
+  const invitation=sent[0].text.match(/https?:[^\s]+\/join#[A-Za-z0-9_-]+/)[0];
+  assert.ok(sent[0].text.includes(`Your organizer invited you to ${exchange.title}`));
+  assert.ok(sent[0].html.includes(`href="${invitation}"`));
+  const redeemed=await call('/redeem',{token:new URL(invitation).hash.slice(1)});
+  assert.equal(redeemed.status,200);const owner=authFrom(redeemed);
+  const signin=prepareSignIn(db,config,person.email);await mailer.deliverSignIn(signin);
+  assert.ok(sent[1].text.includes(`You requested a sign-in link for ${exchange.title}`));
+  const correction=await call('/admin/changes-request',{year:2026,personId:person.id,note:'Please add sizes.'},admin);
+  assert.equal(correction.status,200);await mailer.deliver(2026);
+  assert.ok(sent[2].text.includes('Please add sizes.'));
+  assert.equal((await call('/member/profile',{wishlist:'A medium scarf',gifts:[]},owner)).status,200);
+  draftDraw(db,2026);lockDraw(db,2026);
+  prepareMail(db,config,2026,'assignment',[person.id]);await mailer.deliver(2026);
+  assert.equal(sent.length,4);
+  assert.deepEqual(sent.map(mail=>mail.subject),[
+    `${exchange.title}: your wish list invitation`,`${exchange.title}: sign in to your wish list`,
+    `${exchange.title}: update your wish list`,`${exchange.title}: your Secret Santa match`
+  ]);
+  for(const [i,mail] of sent.entries()) {
+    assert.equal(mail.to,person.email);assert.equal(mail.cc,undefined);assert.equal(mail.bcc,undefined);
+    assert.ok(mail.text.includes(`Sent by Ornament for ${exchange.title}.`));
+    assert.ok(mail.html.includes('<html lang="en">'));
+    assert.equal(/<img|<script|<iframe|<link/.test(mail.html),false);
+    assert.equal(compiled[i].envelope.from,'sender@example.test');
+    assert.deepEqual(compiled[i].envelope.to,[person.email]);
+    const raw=compiled[i].message.toString();
+    for(const field of ['From','To','Subject','Date','Message-ID','Auto-Submitted']) {
+      assert.equal([...raw.matchAll(new RegExp(`^${field}:`,'gm'))].length,1);
+    }
+    assert.match(raw,/^Auto-Submitted: auto-generated\r?$/m);
+    assert.match(raw,/Content-Type: multipart\/alternative;/);
+    assert.match(raw,/Content-Type: text\/plain; charset=utf-8/);
+    assert.match(raw,/Content-Type: text\/html; charset=utf-8/);
+    assert.equal(db.prepare('SELECT status FROM outbox WHERE id=?').get(mail.messageId.slice(1).split('@')[0]).status,'sent');
+  }
+  assert.equal(db.prepare("SELECT count(*) AS count FROM outbox WHERE status='sent'").get().count,4);
+});
+
 test('a complete exchange goes from shared submissions to reviewed identities, repeat-free matches, delivery, and private edits',async t=>{
   const sent=[];
   const transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
@@ -646,7 +694,7 @@ test('a complete exchange goes from shared submissions to reviewed identities, r
   for(const pair of pairs) {
     const giver=people.find(p=>p.id===pair.giver),recipient=people.find(p=>p.id===pair.recipient);
     const mail=sent.find(m=>m.to===giver.email);
-    assert.ok(mail);assert.equal(mail.from,config.smtp.from);
+    assert.ok(mail);assert.equal(mail.from,'"Ornament Secret Santa" <sender@example.test>');
     for(const text of [recipient.name,recipient.wishlist,recipient.message,...recipient.gifts.flatMap(g=>[g.label,g.url])])assert.ok(mail.text.includes(text));
     for(const other of people.filter(p=>p.id!==recipient.id))assert.equal(mail.text.includes(other.wishlist),false);
     assert.ok(mail.text.includes(`${config.publicUrl}/join`));
