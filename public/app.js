@@ -1,4 +1,4 @@
-import { privatePeoplePanel, personChecks, privateSubmissionReview, revealConfirmation, responsiveTable, invitationCandidates } from './organizer.js';
+import { privatePeoplePanel, personChecks, privateSubmissionReview, revealConfirmation, responsiveTable, invitationCandidates, canInvite } from './organizer.js';
 import { matchingTestPanel } from './matching-test.js';
 const app=document.querySelector('#app');
 const dialog=document.querySelector('#dialog');
@@ -94,7 +94,7 @@ function personForm(person={}) {
 }
 function invitationDialog() {
   const people=invitationCandidates(state),preview=state.emailMode==='preview';
-  return `<h2>${preview?'Preview':'Send'} ${people.length} invitations?</h2><p>${preview?'Preview mode is on. No emails will leave the app.':'Each person below will receive a private link to fill out their wish list.'}</p><ul class="invitation-preview">${people.map(p=>`<li><strong>${esc(p.name)}</strong><span>${esc(p.email)}</span></li>`).join('')}</ul><form data-form="invite-people"><input type="hidden" name="year" value="${state.year}"><input type="hidden" name="recipients" value="${esc(JSON.stringify(people.map(p=>({id:p.id,email:p.email}))))}"><button class="primary">${preview?'Create invitation previews':'Send invitation emails'}</button></form>`;
+  return `<h2>Choose invitation recipients</h2><p>Choose just yourself and a partner for a test, or anyone you’re ready to invite. Everyone else can wait.</p>${preview?'<p class="callout">Preview mode is on. No emails will leave the app.</p>':'<p>Only the people you select will receive a private wish-list link.</p>'}<form data-form="invite-people"><input type="hidden" name="year" value="${state.year}"><input type="hidden" name="recipients" value="${esc(JSON.stringify(people.map(p=>({id:p.id,email:p.email}))))}"><fieldset class="invitation-selection"><legend>Recipients</legend><ul class="invitation-preview">${people.map(p=>`<li><label class="checkbox invitation-recipient"><input type="checkbox" name="recipient" value="${esc(p.id)}" ${canInvite(p)?'':'disabled'}><span><strong>${esc(p.name)}</strong><small>${canInvite(p)?esc(p.email):'Add an email address to invite'}</small></span></label></li>`).join('')}</ul></fieldset><p data-invitation-count role="status">0 selected</p><button class="primary" data-invitation-submit disabled>${preview?'Create invitation previews':'Send invitation emails'}</button></form>`;
 }
 
 function rulesPanel() {
@@ -187,6 +187,12 @@ document.addEventListener('input',event=>{
 });
 document.addEventListener('change',event=>{
   if(event.target.id==='existing-member-select'&&event.target.value)showDialog(personForm(state.identities.find(p=>p.id===event.target.value)));
+  const invitations=event.target.closest('[data-form="invite-people"]');
+  if(invitations&&event.target.name==='recipient') {
+    const count=invitations.querySelectorAll('input[name="recipient"]:checked:not(:disabled)').length;
+    invitations.querySelector('[data-invitation-count]').textContent=`${count} selected`;
+    invitations.querySelector('[data-invitation-submit]').disabled=!count;
+  }
 });
 app.addEventListener('input',event=>{
   if(!event.target.closest('.wishlist-form'))return;
@@ -304,7 +310,10 @@ document.addEventListener('submit',async event=>{
     if(type==='person')await api('/admin/people',{...values,id:values.id||undefined,year:Number(values.year),active:form.elements.active.checked,aliases:values.aliases.split(',').map(s=>s.trim()).filter(Boolean)});
     if(type==='participation')await api('/admin/participation',{year:Number(values.year),id:values.id,active:values.active==='true'});
     if(type==='invite-people'){
-      const result=await api('/admin/invitations/send',{year:Number(values.year),confirm:'SEND',recipients:JSON.parse(values.recipients)});
+      const selected=new Set(new FormData(form).getAll('recipient'));
+      const recipients=JSON.parse(values.recipients).filter(p=>selected.has(p.id));
+      if(!recipients.length)throw new Error('Choose at least one person to invite.');
+      const result=await api('/admin/invitations/send',{year:Number(values.year),confirm:'SEND',recipients});
       dialog.close();await loadAdmin();
       const issues=result.counts.failed+result.counts.uncertain;
       notice(issues?`${result.counts.sent} invitations sent; ${issues} delivery issues. Review Delivery.`:state.emailMode==='preview'?`${result.counts.preview} invitation previews created. No emails sent.`:`${result.counts.sent} invitation emails sent.`,!!issues);return;
@@ -346,7 +355,7 @@ document.addEventListener('submit',async event=>{
     }else if(dialog.contains(form)){
       const message=dialog.querySelector('[data-dialog-error]');message.textContent=error.message;message.hidden=false;message.focus();
     }else notice(error.message,true);
-  }finally{working=false;if(familyForm)form.removeAttribute('aria-busy');if(button){button.disabled=false;if(familyForm)button.innerHTML=buttonText;}}
+  }finally{working=false;if(familyForm)form.removeAttribute('aria-busy');if(button){button.disabled=type==='invite-people'&&!form.querySelector('input[name="recipient"]:checked:not(:disabled)');if(familyForm)button.innerHTML=buttonText;}}
 
 });
 

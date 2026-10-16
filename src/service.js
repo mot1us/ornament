@@ -147,7 +147,7 @@ export function prepareInvitations(db,config,year,recipients) {
     if(!person || normalizeEmail(recipient.email)!==normalizeEmail(person.email))throw new Error('The roster or invitation status changed. Review the recipients again.');
     return person;
   }),ids=people.map(p=>p.id);
-  if(people.some(p=>!emailValid(p.email)))throw new Error('Add a valid email address for everyone waiting for an invitation.');
+  if(people.some(p=>!emailValid(p.email)))throw new Error('Add a valid email address for each selected person.');
   prepareMail(db,config,year,'invite',ids);
   transaction(db,()=>{
     for(const id of ids)db.prepare("UPDATE outbox SET status='pending',error='' WHERE year=? AND giver=? AND kind='invite' AND status IN ('preview','cancelled')").run(year,id);

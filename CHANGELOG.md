@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+
+- Let organizers select invitation recipients, including just themselves and a partner for testing, without completing everyone else's email details. Start with no recipients selected and preserve the roster, private submissions, and existing delivery safeguards.
+
 ## 0.8.0
 
 - Carry the previous family roster into new years automatically and repair missing members in existing open exchanges once, preserving submitted lists and finalized history.

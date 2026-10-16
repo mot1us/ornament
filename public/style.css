@@ -328,8 +328,13 @@ dialog[open]::backdrop { animation: page-arrive 180ms both; }
 [data-existing-person] { margin-bottom: 20px; padding: 12px; background: var(--green-light); border-radius: 8px; }
 [data-existing-person] p { margin-top: 0; }
 .invitation-preview { list-style: none; padding: 0; }
-.invitation-preview li { padding: 10px 0; border-bottom: 1px solid var(--line); }
-.invitation-preview span { display: block; overflow-wrap: anywhere; color: var(--muted); }
+.invitation-preview li { border-bottom: 1px solid var(--line); }
+.invitation-selection { margin: 20px 0 0; }
+.invitation-recipient { padding: 10px 0; margin: 0; cursor: pointer; }
+.invitation-recipient input { flex-shrink: 0; }
+.invitation-recipient span { min-width: 0; overflow-wrap: anywhere; }
+.invitation-recipient small { display: block; color: var(--muted); }
+.invitation-recipient:has(input:disabled) { cursor: default; color: var(--muted); }
 .matching-test { margin-bottom: 28px; }
 .matching-test .section-heading { align-items: flex-start; }
 .matching-test .section-heading p { max-width: 540px; margin-bottom: 0; font-size: .85rem; }

@@ -113,6 +113,29 @@ test('reviewed invitation dispatch sends only selected waiting members and prese
   assert.equal(sent.length,2);
 });
 
+test('two selected test invitations do not require completing other people or change the roster',async t=>{
+  const sent=[],transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+  const people=members(db,2026);
+  db.prepare("UPDATE enrollments SET wishlist='' WHERE year=2026").run();
+  for(const p of people.slice(3))db.prepare("UPDATE people SET email='' WHERE id=?").run(p.id);
+  const snapshot=()=>JSON.stringify(['people','enrollments','exchanges','assignments'].map(table=>db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()));
+  const before=snapshot(),recipients=people.slice(0,2).map(p=>({id:p.id,email:p.email}));
+  const request={year:2026,confirm:'SEND',recipients};
+  const invalid=await call('/admin/invitations/send',{...request,recipients:[...recipients,{id:people[3].id,email:''}]},admin);
+  assert.equal(invalid.status,400);assert.match(invalid.data.error,/selected person/);
+  assert.equal(sent.length,0);assert.equal(db.prepare('SELECT count(*) AS n FROM outbox').get().n,0);
+  const result=await call('/admin/invitations/send',request,admin);
+  assert.equal(result.status,200);assert.equal(result.data.counts.sent,2);
+  assert.deepEqual(sent.map(mail=>mail.to).sort(),recipients.map(p=>p.email).sort());
+  assert.deepEqual(db.prepare("SELECT giver FROM outbox WHERE kind='invite' ORDER BY giver").all().map(row=>row.giver),recipients.map(p=>p.id).sort());
+  assert.equal(db.prepare('SELECT count(*) AS n FROM invite_tokens').get().n,2);
+  assert.equal(snapshot(),before);
+  const state=(await call('/admin/state?year=2026',undefined,admin)).data;
+  assert.equal(state.people.length,10);assert.ok(state.people.every(p=>p.active));
+  assert.equal(state.people.filter(p=>!p.email).length,7);
+});
+
 test('invitation dispatch requires recipient review and blocks changed addresses, submitted or inactive members',async t=>{
   const {db,call,admin}=await fixture(t);seed(db);
   const person=members(db,2026)[0];db.prepare("UPDATE enrollments SET wishlist='' WHERE year=2026 AND person_id=?").run(person.id);

@@ -19,7 +19,11 @@ and private content, and cancels unsent invitation records. Include brings them
 back. Finalized rosters remain locked. Add person can select a saved member or
 recognize an existing name/alias before explicitly reusing their identity.
 
-Send invitations requires a recipient review and confirmation. It only sends
+Send invitations lets the organizer choose recipients with checkboxes, initially
+all unchecked. A test can include just one or two members; missing email
+addresses or unfinished details for unselected people do not block sending.
+People missing a valid email are shown but cannot be selected until corrected.
+Sending requires a recipient review and confirmation. It only sends
 invitation records for the reviewed active members who have not submitted and
 have a new, pending, previewed, or cancelled invitation. The server rechecks the
 reviewed IDs and email addresses. Successful, failed, or uncertain deliveries
