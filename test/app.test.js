@@ -72,6 +72,64 @@ test('matching diagnostics require organizer authentication, origin and CSRF, an
   assert.equal((await call('/admin/matching-test',{year:2026},admin)).status,429);
 });
 
+test('past years are history-only and cannot be used as matchmaking test years',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db);
+  const state=(await call('/admin/state',undefined,admin)).data;
+  assert.equal(state.year,2026);assert.deepEqual(state.currentYears,[2026]);
+  assert.deepEqual(state.historyYears,[2025,2024]);
+  assert.equal((await call('/admin/exchanges',{year:2023},admin)).status,400);
+  assert.equal(db.prepare('SELECT year FROM exchanges WHERE year=2023').get(),undefined);
+  for(const year of [2024,2025]) {
+    const before=JSON.stringify(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all());
+    const report=await call('/admin/matching-test',{year,showPairings:true,confirm:'REVEAL'},admin);
+    assert.equal(report.status,400);assert.match(report.data.error,/Past years are history records/);
+    assert.equal(JSON.stringify(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all()),before);
+  }
+  db.prepare("UPDATE exchanges SET state='locked' WHERE year=2025").run();
+  assert.equal((await call('/admin/matching-test',{year:2025},admin)).status,400);
+  assert.deepEqual((await call('/admin/state',undefined,admin)).data.currentYears,[2026]);
+});
+
+test('historical review is explicit, excludes private submissions and current matches, and confirms the requested year',async t=>{
+  const {db,call,admin}=await fixture(t);seed(db,'provisional');draftDraw(db,2026);
+  assert.equal((await call('/admin/history/record?year=2025')).status,403);
+  const record=(await call('/admin/history/record?year=2025',undefined,admin)).data;
+  assert.equal(record.year,2025);assert.equal(record.pairs.length,10);assert.equal(record.canConfirm,true);
+  assert.deepEqual(Object.keys(record.pairs[0]).sort(),['giver','recipient']);
+  for(const person of members(db,2026))for(const value of [person.email,person.wishlist])assert.equal(JSON.stringify(record).includes(value),false);
+  assert.equal((await call('/admin/history/record?year=2026',undefined,admin)).status,400);
+  const missing=(await call('/admin/history/record?year=2023',undefined,admin)).data;
+  assert.equal(missing.exists,false);assert.equal(missing.canConfirm,false);assert.deepEqual(missing.pairs,[]);
+  assert.equal((await call('/admin/history/confirm',{year:2025},{...admin,csrf:'wrong'})).status,403);
+  assert.equal((await call('/admin/history/confirm',{year:2025},admin)).status,200);
+  const state=(await call('/admin/state',undefined,admin)).data;
+  assert.equal(state.year,2026);assert.equal(state.exchange.state,'open');
+  assert.ok(state.history.every(h=>h.status==='verified'));
+  assert.equal((await call('/admin/history/record?year=2025',undefined,admin)).data.canConfirm,false);
+  db.prepare("INSERT INTO people(id,name) VALUES ('missing-historical-person','Missing Guest')").run();
+  db.prepare("INSERT INTO enrollments(year,person_id) VALUES (2025,'missing-historical-person')").run();
+  assert.equal((await call('/admin/state',undefined,admin)).data.history[0].status,'incomplete');
+  assert.equal((await call('/admin/history/record?year=2025',undefined,admin)).data.status,'incomplete');
+  assert.equal((await call('/admin/history/confirm',{year:2025},admin)).status,400);
+});
+
+test('current test pairings never repeat recorded recent pairs when a former participant leaves and a member is renamed',async t=>{
+  const {db,call,admin}=await fixture(t);
+  const names=Array.from({length:11},(_,i)=>`Guest ${i+1}`);
+  importHistory(db,history(2024,1,names));importHistory(db,history(2025,2,names.slice(0,10)));
+  createExchange(db,2026,2025);
+  const first=members(db,2026)[0];savePerson(db,2026,{...first,name:'Updated Guest',active:true});
+  const previous=new Set(db.prepare('SELECT giver,recipient FROM assignments WHERE year IN (2024,2025)').all().map(p=>JSON.stringify([p.giver,p.recipient])));
+  const before=JSON.stringify(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all());
+  const report=await call('/admin/matching-test',{year:2026,showPairings:true,confirm:'REVEAL'},admin);
+  assert.equal(report.status,200);assert.equal(report.data.year,2026);assert.equal(report.data.checked,100);
+  assert.deepEqual(report.data.history.map(h=>h.year),[2025,2024]);
+  for(const draw of report.data.testDraws)for(const pair of draw)assert.equal(previous.has(JSON.stringify([pair.giver,pair.recipient])),false);
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all()),before);
+  assert.equal((await call('/admin/state',undefined,admin)).data.people.length,10);
+  assert.equal((await call('/admin/history/record?year=2024',undefined,admin)).data.pairs.length,11);
+});
+
 test('explicit test pairing results show every validated draw without changing open, draft, finalized or mail data',async t=>{
   const {db,config,call,admin}=await fixture(t);seed(db);
   const [a,b,inactive]=members(db,2026);savePartners(db,2026,{first:a.id,second:b.id});

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { openDatabase, audit, getExchange, members, transaction, importHistory } from './database.js';
 import { createExchange, savePerson, emailValid, matchingOptions, historyReadiness, mutable, invalidateDraft, draftDraw,
-  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest, setParticipation, prepareInvitations, prepareTestInvitations } from './service.js';
+  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest, setParticipation, prepareInvitations, prepareTestInvitations, isHistoricalExchange } from './service.js';
 import { secret, hash, passwordMatches, readConfig } from './security.js';
 import { createMailer } from './mail.js';
 import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
@@ -135,11 +135,13 @@ export function createApp(config,db,providedTransport) {
   app.get('/api/admin/state',(req,res)=>{
     expireSignIns(db);
     const exchanges = db.prepare('SELECT * FROM exchanges ORDER BY year DESC').all();
-    const year = Number(req.query.year || exchanges[0]?.year);
+    const currentYears=exchanges.filter(e=>!isHistoricalExchange(e)).map(e=>e.year);
+    const historyYears=exchanges.filter(isHistoricalExchange).map(e=>e.year);
+    const year = req.query.year?Number(req.query.year):(currentYears[0]||null);
     const exchange = exchanges.find(e=>e.year===year) || null;
     const people = exchange ? members(db,year).map(p=>({id:p.id,name:p.name,email:p.email,aliases:p.aliases,active:p.active,
       validation:validateWishlist(p,p.email),changesRequested:p.changes_requested})) : [];
-    res.json({exchanges,year,exchange,people,identities:db.prepare('SELECT id,name,email,aliases FROM people ORDER BY name COLLATE NOCASE').all().map(p=>({...p,aliases:JSON.parse(p.aliases)})),submissions:exchange?listSubmissions(db,year):[],
+    res.json({exchanges,currentYears,historyYears,year,exchange,people,identities:db.prepare('SELECT id,name,email,aliases FROM people ORDER BY name COLLATE NOCASE').all().map(p=>({...p,aliases:JSON.parse(p.aliases)})),submissions:exchange?listSubmissions(db,year):[],
       exclusions:exchange ? matchingOptions(db,year).exclusions : [],
       partners:exchange ? db.prepare('SELECT first,second FROM partners WHERE year=? ORDER BY first').all(year) : [],
       reset:exchange ? resetPreview(db,year) : null,
@@ -203,10 +205,25 @@ export function createApp(config,db,providedTransport) {
     res.set('Content-Disposition','attachment; filename="secret-santa-history.json"').json(exported);
   });
   app.post('/api/admin/exchanges',(req,res)=>{
+    if(Number(req.body.year)<new Date().getFullYear())throw new Error('Add past years from History. New exchanges must be for the current year or later.');
     const result = createExchange(db,Number(req.body.year),Number(req.body.copyFrom)||null);
     res.json(result);
   });
   app.post('/api/admin/history',(req,res)=>{res.json({assignments:importHistory(db,req.body)});});
+  app.get('/api/admin/history/record',(req,res)=>{
+    const year=Number(req.query.year);
+    if(!Number.isInteger(year)||year<2000||year>2200)throw new Error('Choose a valid history year.');
+    const exchange=db.prepare('SELECT year,state,history_status,source FROM exchanges WHERE year=?').get(year);
+    if(!exchange)return res.json({year,exists:false,state:'missing',history_status:'missing',source:'',pairs:[],participantIds:[],canEdit:true,canConfirm:false});
+    if(!isHistoricalExchange(exchange))throw new Error('Current matches stay private. Use the Draw reveal action to view them.');
+    const pairs=db.prepare(`SELECT giver.name AS giver,recipient.name AS recipient FROM assignments a
+      JOIN people giver ON giver.id=a.giver JOIN people recipient ON recipient.id=a.recipient
+      WHERE a.year=? ORDER BY giver.name COLLATE NOCASE`).all(year);
+    const readiness=historyReadiness(db,year+1)[0];
+    res.json({...exchange,status:readiness.status,exists:true,pairs,participantIds:members(db,year).filter(p=>p.active).map(p=>p.id),
+      canEdit:['archived','no_exchange'].includes(exchange.state),
+      canConfirm:exchange.state==='archived'&&readiness.status==='provisional'});
+  });
   app.post('/api/admin/history/none',(req,res)=>{
     const year=Number(req.body.year);
     if(!Number.isInteger(year)||year<2000||year>2200||req.body.confirm!=='NO EXCHANGE')throw new Error('Enter a valid year and type NO EXCHANGE to confirm that no draw happened.');
@@ -223,6 +240,7 @@ export function createApp(config,db,providedTransport) {
     const exchange = getExchange(db,year);
     if (exchange.state!=='archived') throw new Error('Only imported historical exchanges need confirmation.');
     if (!db.prepare('SELECT giver FROM assignments WHERE year=?').get(year)) throw new Error('No history has been imported.');
+    if(historyReadiness(db,year+1)[0].status==='incomplete')throw new Error('The recorded pairings do not match that year’s participant list. Update the history before confirming it.');
     db.prepare("UPDATE exchanges SET history_status='verified' WHERE year=?").run(year);
     // A changed historical rule can invalidate any current draft.
     for (const row of db.prepare("SELECT year FROM exchanges WHERE state='drafted' AND year IN (?,?)").all(year+1,year+2)) invalidateDraft(db,row.year);

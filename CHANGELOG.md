@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3
+
+- Keep past years inside History and block matchmaking tests for historical exchanges. Reviewing or editing past pairings preserves the active draw year.
+- Show the draw year and the two checked history years beside tests, with direct review actions for missing or unconfirmed records. Add explicit historical review and confirmation dialogs, preserve confirmed status when editing, and reject confirmation of incomplete recorded rosters.
+
 ## 0.10.2
 
 - Give invitations, sign-ins, correction requests, and matches exchange-specific subjects and clear context. Use a recognizable default sender name while preserving the approved mailbox and custom identities.

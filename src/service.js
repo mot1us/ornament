@@ -97,10 +97,20 @@ export function matchingOptions(db, year) {
       ...partners.flatMap(p=>[{giver:p.first,recipient:p.second},{giver:p.second,recipient:p.first}])]};
 }
 
+export function isHistoricalExchange(exchange) {
+  return ['archived','no_exchange'].includes(exchange.state) || exchange.year<new Date().getFullYear();
+}
+
 export function historyReadiness(db, year) {
   return [year-1,year-2].map(prior => {
     const exchange = db.prepare('SELECT state,history_status FROM exchanges WHERE year=?').get(prior);
-    return {year:prior, status: ['archived','locked','no_exchange'].includes(exchange?.state) ? exchange.history_status : 'missing',noExchange:exchange?.state==='no_exchange'};
+    const pairs=db.prepare('SELECT giver,recipient FROM assignments WHERE year=?').all(prior);
+    let status=['archived','locked','no_exchange'].includes(exchange?.state)?exchange.history_status:'missing';
+    if(['archived','locked'].includes(exchange?.state)) {
+      const ids=members(db,prior).filter(p=>p.active).map(p=>p.id);
+      if(ids.length<3 || validateDraw(pairs,ids,{year:prior}).length)status='incomplete';
+    }
+    return {year:prior,status,noExchange:exchange?.state==='no_exchange',pairCount:pairs.length};
   });
 }
 
@@ -118,7 +128,7 @@ export function draftDraw(db, year) {
 }
 
 export function matchingTest(db,year,{includePairings=false}={}) {
-  getExchange(db,year);
+  if(isHistoricalExchange(getExchange(db,year)))throw new Error('Past years are history records. Select the current exchange to test matchmaking.');
   const people=members(db,year).filter(p=>p.active).map(p=>p.id);
   return {...testMatchmaking(people,matchingOptions(db,year),{includePairings}),year,history:historyReadiness(db,year)};
 }
