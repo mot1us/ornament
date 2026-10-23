@@ -19,7 +19,14 @@ export function checkEmailIdentity(db,email,id) {
 }
 const short = (value, limit) => String(value ?? '').trim().slice(0, limit);
 function cancelUnsentInvitation(db,year,id) {
-  db.prepare("UPDATE outbox SET status='cancelled',error='This person is not taking part this year.' WHERE year=? AND giver=? AND (kind='invite' OR kind LIKE 'test-invite:%') AND status IN ('pending','preview','failed')").run(year,id);
+  db.prepare("UPDATE outbox SET status='cancelled',error='This person is not taking part this year.' WHERE year=? AND giver=? AND (kind='invite' OR kind LIKE 'invite-resend:%' OR kind LIKE 'test-invite:%') AND status IN ('pending','preview','failed')").run(year,id);
+}
+export function retireEmailAccess(db,year,id) {
+  db.prepare('DELETE FROM invite_tokens WHERE person_id=?').run(id);
+  db.prepare('DELETE FROM sign_in_tokens WHERE person_id=?').run(id);
+  db.prepare("DELETE FROM sessions WHERE role='member' AND person_id=?").run(id);
+  db.prepare("DELETE FROM sessions WHERE role='submission' AND person_id IN (SELECT id FROM submissions WHERE person_id=?)").run(id);
+  db.prepare("UPDATE outbox SET recipient_email=(SELECT email FROM people WHERE id=?) WHERE year=? AND giver=? AND kind NOT LIKE 'signin:%' AND status IN ('pending','failed','preview')").run(id,year,id);
 }
 export function giftList(input) {
   if (!Array.isArray(input) || input.length > 5) throw new Error('Add up to five gift ideas.');
@@ -68,6 +75,7 @@ export function savePerson(db, year, input) {
   if (aliases.length > 10) throw new Error('Use at most ten alternate names.');
   const id = input.id || randomUUID();
   const existing = db.prepare('SELECT * FROM people WHERE id=?').get(id);
+  const enrollment=db.prepare('SELECT active FROM enrollments WHERE year=? AND person_id=?').get(year,id);
   if (input.id && !existing) throw new Error('Person not found.');
   checkEmailIdentity(db,email,id);
   if(existing && existing.name!==name && !aliases.includes(existing.name))aliases.push(existing.name);
@@ -78,11 +86,11 @@ export function savePerson(db, year, input) {
   return transaction(db, () => {
     db.prepare(`INSERT INTO people(id,name,email,aliases) VALUES (?,?,?,?) ON CONFLICT(id)
       DO UPDATE SET name=excluded.name,email=excluded.email,aliases=excluded.aliases`).run(id,name,email,JSON.stringify(aliases));
-    db.prepare('DELETE FROM sign_in_tokens WHERE person_id=? AND email<>?').run(id,email);
+    if(existing&&normalizeEmail(existing.email)!==email)retireEmailAccess(db,year,id);
     db.prepare('INSERT OR IGNORE INTO enrollments(year,person_id) VALUES (?,?)').run(year,id);
     db.prepare('UPDATE enrollments SET active=? WHERE year=? AND person_id=?').run(input.active === false ? 0 : 1,year,id);
     if(input.active===false)cancelUnsentInvitation(db,year,id);
-    invalidateDraft(db,year);
+    if(!enrollment||Boolean(enrollment.active)!==(input.active!==false))invalidateDraft(db,year);
     audit(db,'save-person',{year,id});
     return id;
   });
@@ -143,23 +151,56 @@ export function setParticipation(db,year,id,active) {
   });
 }
 
+export function invitationStatus(db,year,person) {
+  const latest=db.prepare("SELECT id,status,recipient_email FROM outbox WHERE year=? AND giver=? AND (kind='invite' OR kind LIKE 'invite-resend:%') ORDER BY rowid DESC LIMIT 1").get(year,person.id);
+  const blocked=Boolean(db.prepare(`SELECT id FROM outbox WHERE year=? AND giver=? AND
+    ((kind='invite' AND status IN ('sending','uncertain')) OR ((kind LIKE 'invite-resend:%' OR kind LIKE 'test-invite:%') AND status IN ('pending','sending','uncertain')))` ).get(year,person.id));
+  const addressChanged=Boolean(latest&&normalizeEmail(latest.recipient_email)!==normalizeEmail(person.email));
+  return {id:latest?.id||null,status:latest?.status||'new',addressChanged,
+    canSend:Boolean(person.active&&!validateWishlist(person,person.email).submitted&&!blocked&&
+      (!latest||['pending','preview','cancelled'].includes(latest.status)||latest.status==='sent'&&addressChanged)),
+    canResend:Boolean(person.active&&emailValid(person.email)&&latest&&['sent','failed'].includes(latest.status)&&!blocked)};
+}
+
 export function invitationRecipients(db,year) {
-  return members(db,year).filter(person=>{
-    if(!person.active || validateWishlist(person,person.email).submitted)return false;
-    const mail=db.prepare("SELECT status FROM outbox WHERE year=? AND giver=? AND kind='invite'").get(year,person.id);
-    return !mail || ['pending','preview','cancelled'].includes(mail.status);
-  });
+  return members(db,year).map(person=>({...person,invitation:invitationStatus(db,year,person)})).filter(person=>person.invitation.canSend);
+}
+
+function queueInvitation(db,config,year,person,resend=false) {
+  const id=randomUUID(),mail=makeEmail(db,config,year,person.id,'invite');
+  db.prepare('INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body) VALUES (?,?,?,?,?,?,?)').run(
+    id,year,person.id,resend?`invite-resend:${id}`:'invite',mail.email,mail.subject,mail.body);
+  return id;
 }
 
 export function prepareInvitations(db,config,year,recipients) {
   mutable(db,year);
   const waiting=invitationRecipients(db,year);
-  const people=reviewInvitationRecipients(waiting,recipients),ids=people.map(p=>p.id);
-  prepareMail(db,config,year,'invite',ids);
-  transaction(db,()=>{
-    for(const id of ids)db.prepare("UPDATE outbox SET status='pending',error='' WHERE year=? AND giver=? AND kind='invite' AND status IN ('preview','cancelled')").run(year,id);
+  const people=reviewInvitationRecipients(waiting,recipients);
+  return transaction(db,()=>{
+    const mailIds=people.map(person=>{
+      if(!person.invitation.id)return queueInvitation(db,config,year,person);
+      if(person.invitation.status==='sent') {
+        if(person.invitation.addressChanged)retireEmailAccess(db,year,person.id);
+        return queueInvitation(db,config,year,person,true);
+      }
+      const mail=makeEmail(db,config,year,person.id,'invite');
+      db.prepare("UPDATE outbox SET status='pending',error='',recipient_email=?,subject=?,body=? WHERE id=?").run(mail.email,mail.subject,mail.body,person.invitation.id);
+      return person.invitation.id;
+    });
+    audit(db,'prepare-invitations',{year,count:mailIds.length});return mailIds;
   });
-  return ids;
+}
+
+export function prepareInvitationResend(db,config,year,recipient) {
+  mutable(db,year);
+  const waiting=members(db,year).map(person=>({...person,invitation:invitationStatus(db,year,person)})).filter(person=>person.invitation.canResend);
+  const [person]=reviewInvitationRecipients(waiting,[recipient]);
+  if(!recipient.invitationId||recipient.invitationId!==person.invitation.id)throw new Error('This invitation changed. Review the person again before resending.');
+  return transaction(db,()=>{
+    if(person.invitation.addressChanged)retireEmailAccess(db,year,person.id);
+    const id=queueInvitation(db,config,year,person,true);audit(db,'resend-invitation',{year,personId:person.id,previous:person.invitation.id,id});return id;
+  });
 }
 
 function reviewInvitationRecipients(waiting,recipients) {
@@ -167,6 +208,7 @@ function reviewInvitationRecipients(waiting,recipients) {
   const people=recipients.map(recipient=>{
     const person=waiting.find(p=>p.id===recipient?.id);
     if(!person || normalizeEmail(recipient.email)!==normalizeEmail(person.email))throw new Error('The roster or invitation status changed. Review the recipients again.');
+    if(person.invitation&&recipient.invitationId!==undefined&&recipient.invitationId!==person.invitation.id)throw new Error('This invitation changed. Review the recipients again.');
     return person;
   });
   if(people.some(p=>!emailValid(p.email)))throw new Error('Add a valid email address for each selected person.');
@@ -176,7 +218,7 @@ function reviewInvitationRecipients(waiting,recipients) {
 export function prepareTestInvitations(db,config,year,recipients) {
   mutable(db,year);
   const waiting=members(db,year).filter(p=>p.active&&!db.prepare(`SELECT id FROM outbox WHERE year=? AND giver=?
-    AND ((kind='invite' AND status IN ('sending','uncertain')) OR (kind LIKE 'test-invite:%' AND status IN ('pending','sending','uncertain')))` ).get(year,p.id));
+    AND ((kind='invite' AND status IN ('sending','uncertain')) OR ((kind LIKE 'test-invite:%' OR kind LIKE 'invite-resend:%') AND status IN ('pending','sending','uncertain')))` ).get(year,p.id));
   const people=reviewInvitationRecipients(waiting,recipients);
   return transaction(db,()=>{
     const ids=people.map(person=>{

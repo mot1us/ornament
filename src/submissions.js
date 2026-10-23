@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { audit, findPerson, getExchange, transaction } from './database.js';
-import { checkEmailIdentity, clearChangesRequest, emailValid, invalidateDraft, mutable, normalizeEmail } from './service.js';
+import { checkEmailIdentity, clearChangesRequest, emailValid, invalidateDraft, mutable, normalizeEmail, retireEmailAccess } from './service.js';
 import { hash, secret } from './security.js';
 import { checkedWishlist, validateWishlist } from './validation.js';
 
@@ -80,8 +80,7 @@ export function approveSubmission(db,id,requestedPersonId) {
   return transaction(db,()=>{
     if (person) {
       db.prepare('UPDATE people SET email=? WHERE id=?').run(submission.email,personId);
-      db.prepare('DELETE FROM sign_in_tokens WHERE person_id=? AND email<>?').run(personId,submission.email);
-      db.prepare("UPDATE outbox SET recipient_email=? WHERE year=? AND giver=? AND kind IN ('invite','assignment') AND status IN ('pending','failed','preview')").run(submission.email,year,personId);
+      if(normalizeEmail(person.email)!==normalizeEmail(submission.email))retireEmailAccess(db,year,personId);
     } else db.prepare('INSERT INTO people(id,name,email) VALUES (?,?,?)').run(personId,submission.name,submission.email);
     db.prepare(`INSERT INTO enrollments(year,person_id,active,wishlist,message,gifts) VALUES (?,?,1,?,?,?)
       ON CONFLICT(year,person_id) DO UPDATE SET active=1,wishlist=excluded.wishlist,message=excluded.message,gifts=excluded.gifts`).run(

@@ -128,6 +128,22 @@ is `failed`; an ambiguous connection failure is `uncertain`. A process restart
 also converts an in-flight `sending` record to `uncertain`. The organizer must
 check the mailbox before explicitly retrying an uncertain message.
 
+On **People**, **Resend invitation** reviews one person's current email and sends
+a new personal invitation, including when the earlier link was lost or expired.
+The link lasts 48 hours from dispatch and replaces that person's previous
+invitation; their saved wish list, message and gift ideas remain available.
+Each resend has its own delivery record and Message-ID, preserving earlier
+successful sends. Only the reviewed message is dispatched; other pending emails
+are left queued. Replaying an old review cannot send another invitation.
+
+Correcting a sent address also makes an unsubmitted person available in **Send
+invitations** again. Saving an address never dispatches email. An actual address
+change retires that person's earlier invitation/sign-in links and owner sessions,
+and updates unsent messages for the selected year. Contact-only edits preserve
+draft matches. Existing successful and uncertain delivery records stay intact;
+uncertain delivery must be reviewed in Delivery before resending. Resends are
+available while the exchange is open or drafted. Finalized records stay locked.
+
 SMTP cannot guarantee exactly-once delivery: a server can accept a message
 before the app learns it succeeded. The uncertainty workflow avoids automatic
 duplicate sends but cannot rule out a duplicate after an incorrect manual

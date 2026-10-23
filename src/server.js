@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { openDatabase, audit, getExchange, members, transaction, importHistory } from './database.js';
 import { createExchange, savePerson, emailValid, matchingOptions, historyReadiness, mutable, invalidateDraft, draftDraw,
-  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest, setParticipation, prepareInvitations, prepareTestInvitations, isHistoricalExchange } from './service.js';
+  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest, setParticipation, prepareInvitations, prepareTestInvitations, isHistoricalExchange, invitationStatus, prepareInvitationResend, retireEmailAccess } from './service.js';
 import { secret, hash, passwordMatches, readConfig } from './security.js';
 import { createMailer } from './mail.js';
 import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
@@ -140,7 +140,7 @@ export function createApp(config,db,providedTransport) {
     const year = req.query.year?Number(req.query.year):(currentYears[0]||null);
     const exchange = exchanges.find(e=>e.year===year) || null;
     const people = exchange ? members(db,year).map(p=>({id:p.id,name:p.name,email:p.email,aliases:p.aliases,active:p.active,
-      validation:validateWishlist(p,p.email),changesRequested:p.changes_requested})) : [];
+      validation:validateWishlist(p,p.email),changesRequested:p.changes_requested,invitation:invitationStatus(db,year,p)})) : [];
     res.json({exchanges,currentYears,historyYears,year,exchange,people,identities:db.prepare('SELECT id,name,email,aliases FROM people ORDER BY name COLLATE NOCASE').all().map(p=>({...p,aliases:JSON.parse(p.aliases)})),submissions:exchange?listSubmissions(db,year):[],
       exclusions:exchange ? matchingOptions(db,year).exclusions : [],
       partners:exchange ? db.prepare('SELECT first,second FROM partners WHERE year=? ORDER BY first').all(year) : [],
@@ -255,25 +255,39 @@ export function createApp(config,db,providedTransport) {
       invalidateDraft(db,year);audit(db,'save-settings',{year});
     });res.json({ok:true});
   });
-  app.post('/api/admin/people',(req,res)=>{res.json({id:savePerson(db,Number(req.body.year),req.body)});});
+  app.post('/api/admin/people',(req,res)=>{
+    if(mailer.busy)throw new Error('Wait until email delivery has finished before editing people.');
+    res.json({id:savePerson(db,Number(req.body.year),req.body)});
+  });
   app.post('/api/admin/participation',(req,res)=>{
     if(typeof req.body.active!=='boolean')throw new Error('Choose whether this person is taking part.');
     setParticipation(db,Number(req.body.year),req.body.id,req.body.active);res.json({ok:true});
   });
   app.post('/api/admin/invitations/send',async(req,res)=>{
     if(req.body.confirm!=='SEND')throw new Error('Confirm sending invitations.');
+    if(mailer.busy)throw new Error('Wait until email delivery has finished.');
     if(config.emailMode==='smtp'&&!mailer.ready)throw new Error('Configure SMTP before sending invitation emails.');
-    const year=Number(req.body.year),ids=prepareInvitations(db,config,year,req.body.recipients);
-    if(ids.length)await mailer.deliver(year,{kind:'invite',ids});
+    const year=Number(req.body.year),mailIds=prepareInvitations(db,config,year,req.body.recipients);
+    await mailer.deliver(year,{mailIds});
     const counts={sent:0,preview:0,failed:0,uncertain:0};
-    for(const id of ids) {
-      const row=db.prepare("SELECT status FROM outbox WHERE year=? AND giver=? AND kind='invite'").get(year,id);
+    for(const id of mailIds) {
+      const row=db.prepare('SELECT status FROM outbox WHERE id=?').get(id);
       if(row?.status in counts)counts[row.status]++;
     }
-    res.json({count:ids.length,counts});
+    res.json({count:mailIds.length,counts});
+  });
+  app.post('/api/admin/invitations/resend',async(req,res)=>{
+    if(req.body.confirm!=='RESEND')throw new Error('Confirm resending this invitation.');
+    if(mailer.busy)throw new Error('Wait until email delivery has finished.');
+    if(config.emailMode==='smtp'&&!mailer.ready)throw new Error('Configure SMTP before sending invitation emails.');
+    const year=Number(req.body.year),id=prepareInvitationResend(db,config,year,req.body.recipient);
+    await mailer.deliver(year,{mailIds:[id]});
+    const status=db.prepare('SELECT status FROM outbox WHERE id=?').get(id).status;
+    res.json({count:1,counts:{sent:status==='sent'?1:0,preview:status==='preview'?1:0,failed:status==='failed'?1:0,uncertain:status==='uncertain'?1:0}});
   });
   app.post('/api/admin/invitations/test',async(req,res)=>{
     if(req.body.confirm!=='TEST')throw new Error('Confirm sending fresh test invitations.');
+    if(mailer.busy)throw new Error('Wait until email delivery has finished.');
     if(config.emailMode==='smtp'&&!mailer.ready)throw new Error('Configure SMTP before sending invitation emails.');
     const year=Number(req.body.year),mailIds=prepareTestInvitations(db,config,year,req.body.recipients);
     await mailer.deliver(year,{mailIds});
@@ -285,13 +299,14 @@ export function createApp(config,db,providedTransport) {
     res.json({count:mailIds.length,counts});
   });
   app.post('/api/admin/contact',(req,res)=>{
+    if(mailer.busy)throw new Error('Wait until email delivery has finished before changing an address.');
     const year=Number(req.body.year),id=req.body.id,email=normalizeEmail(req.body.email);
     if(!emailValid(email)||!db.prepare('SELECT person_id FROM enrollments WHERE year=? AND person_id=?').get(year,id))throw new Error('Choose an existing person and enter a valid email address.');
     checkEmailIdentity(db,email,id);
     transaction(db,()=>{
+      const previous=db.prepare('SELECT email FROM people WHERE id=?').get(id);
       db.prepare('UPDATE people SET email=? WHERE id=?').run(email,id);
-      db.prepare('DELETE FROM sign_in_tokens WHERE person_id=? AND email<>?').run(id,email);
-      db.prepare("UPDATE outbox SET recipient_email=? WHERE year=? AND giver=? AND kind IN ('invite','assignment') AND status IN ('pending','failed','preview')").run(email,year,id);
+      if(normalizeEmail(previous.email)!==email)retireEmailAccess(db,year,id);
       audit(db,'correct-contact',{year,id});
     });res.json({ok:true});
   });
@@ -364,7 +379,7 @@ export function createApp(config,db,providedTransport) {
   app.post('/api/admin/mail/retry',(req,res)=>{
     const row = db.prepare('SELECT * FROM outbox WHERE id=?').get(req.body.id);
     if (row?.kind.startsWith('signin:')) throw new Error('Request a new sign-in link from the homepage.');
-    if(row?.kind.startsWith('test-invite:'))mutable(db,row.year);
+    if(row?.kind.startsWith('test-invite:')||row?.kind.startsWith('invite-resend:'))mutable(db,row.year);
     if (!row || !['failed','preview','uncertain'].includes(row.status)) throw new Error('Only failed, previewed, or reviewed uncertain messages can be retried.');
     if (row.status==='uncertain' && req.body.confirm!=='CHECKED') throw new Error('Confirm you checked the mailbox before retrying this uncertain email.');
     const person=db.prepare('SELECT email FROM people WHERE id=?').get(row.giver);

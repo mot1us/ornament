@@ -242,6 +242,123 @@ test('reviewed invitation dispatch sends only selected waiting members and prese
   assert.equal(sent.length,2);
 });
 
+test('correcting a dispatched address enables only that invitation, retires old access and preserves sent records and drafts',async t=>{
+  const sent=[],transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+  const people=members(db,2026),person=people[0];
+  db.prepare("UPDATE enrollments SET wishlist='' WHERE year=2026").run();
+  assert.equal((await call('/admin/invitations/send',{year:2026,confirm:'SEND',recipients:people.map(p=>({id:p.id,email:p.email}))},admin)).data.counts.sent,10);
+  const original=db.prepare("SELECT * FROM outbox WHERE kind='invite' ORDER BY giver").all();
+  const oldLink=sent.find(mail=>mail.to===person.email).text.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0];
+  const oldOwner=authFrom(await call('/redeem',{token:new URL(oldLink).hash.slice(1)}));
+  const unused=inviteLink(db,config,2026,person.id),signin=prepareSignIn(db,config,person.email),signinLink=signInToken(db,signin).token;
+  draftDraw(db,2026);const draw=db.prepare('SELECT * FROM assignments ORDER BY year,giver').all();
+  const corrected={...person,year:2026,email:'corrected-guest@example.test'};
+  assert.equal((await call('/admin/people',corrected,admin)).status,200);assert.equal(sent.length,10,'Editing never sends email');
+  assert.equal((await call('/member/profile',undefined,oldOwner)).status,403);
+  assert.equal((await call('/redeem',{token:new URL(unused).hash.slice(1)})).status,401);
+  assert.equal((await call('/redeem',{token:signinLink})).status,401);
+  const state=(await call('/admin/state',undefined,admin)).data;
+  assert.deepEqual(state.people.filter(p=>p.invitation.canSend).map(p=>p.id),[person.id]);
+  const updated=state.people.find(p=>p.id===person.id);assert.equal(updated.invitation.addressChanged,true);assert.equal(updated.invitation.canResend,true);
+  const response=await call('/admin/invitations/send',{year:2026,confirm:'SEND',recipients:[{id:person.id,email:corrected.email,invitationId:updated.invitation.id}]},admin);
+  assert.equal(response.status,200);assert.equal(response.data.counts.sent,1);assert.equal(sent.length,11);assert.equal(sent.at(-1).to,corrected.email);
+  assert.deepEqual(db.prepare("SELECT * FROM outbox WHERE kind='invite' ORDER BY giver").all(),original);
+  assert.deepEqual(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all(),draw);
+  assert.equal(db.prepare('SELECT state FROM exchanges WHERE year=2026').get().state,'drafted');
+  assert.equal((await call('/admin/state',undefined,admin)).data.people.some(p=>p.invitation.canSend),false);
+});
+
+test('per-person resends replace expired or lost invitations with fresh access while keeping saved lists and every prior delivery',async t=>{
+  const sent=[],transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+  const person=members(db,2026)[0];prepareMail(db,config,2026,'invite');db.prepare("UPDATE outbox SET status='sent',sent_at='2026-01-01',attempts=1 WHERE kind='invite'").run();
+  db.prepare('UPDATE invite_tokens SET expires=? WHERE person_id=?').run(Date.now()-1,person.id);
+  const before=db.prepare('SELECT * FROM outbox ORDER BY id').all(),profile=members(db,2026).find(p=>p.id===person.id);
+  const current=()=>(db.prepare("SELECT id FROM outbox WHERE giver=? AND (kind='invite' OR kind LIKE 'invite-resend:%') ORDER BY rowid DESC LIMIT 1").get(person.id).id);
+  const request={year:2026,confirm:'RESEND',recipient:{id:person.id,email:person.email,invitationId:current()}};
+  const result=await call('/admin/invitations/resend',request,admin);assert.equal(result.status,200);assert.equal(result.data.counts.sent,1);
+  assert.equal((await call('/admin/invitations/resend',request,admin)).status,400,'A replay cannot send another invitation');
+  const first=sent[0].text.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0];
+  const token=db.prepare('SELECT * FROM invite_tokens WHERE person_id=?').get(person.id);assert.equal(token.fresh_start,0);assert.ok(token.expires>Date.now()+47*3600000);
+  assert.equal((await call('/admin/invitations/resend',{...request,recipient:{...request.recipient,invitationId:current()}},admin)).status,200);
+  assert.equal((await call('/redeem',{token:new URL(first).hash.slice(1)})).status,401,'A new resend retires the earlier unconsumed link');
+  const latest=sent.at(-1).text.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0],owner=authFrom(await call('/redeem',{token:new URL(latest).hash.slice(1)}));
+  const saved=await call('/member/profile',undefined,owner);assert.equal(saved.status,200);assert.equal(saved.data.person.wishlist,profile.wishlist);
+  assert.deepEqual(members(db,2026).find(p=>p.id===person.id),profile);
+  assert.equal(sent.length,2);assert.ok(sent.every(mail=>mail.to===person.email));
+  for(const row of before)assert.deepEqual(db.prepare('SELECT * FROM outbox WHERE id=?').get(row.id),row);
+});
+
+test('resends require recipient review and organizer permissions and block uncertain, pending, inactive and finalized cases',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);const person=members(db,2026)[0];
+  prepareMail(db,config,2026,'invite');db.prepare("UPDATE outbox SET status='sent' WHERE kind='invite'").run();
+  const prior=db.prepare("SELECT * FROM outbox WHERE kind='invite' AND giver=?").get(person.id);
+  const request={year:2026,confirm:'RESEND',recipient:{id:person.id,email:person.email,invitationId:prior.id}};
+  for(const auth of [{},{...admin,csrf:'wrong'},{...admin,headers:{Origin:'https://attacker.test'}}])assert.equal((await call('/admin/invitations/resend',request,auth)).status,403);
+  for(const body of [{...request,confirm:'SEND'},{...request,recipient:undefined},{...request,recipient:{...request.recipient,email:'stale@example.test'}},{...request,recipient:{...request.recipient,invitationId:'stale'}}])assert.equal((await call('/admin/invitations/resend',body,admin)).status,400);
+  for(const [kind,status] of [['invite-resend:waiting','pending'],['invite-resend:waiting','uncertain'],['test-invite:waiting','uncertain']]) {
+    db.prepare("INSERT INTO outbox(id,year,giver,kind,recipient_email,subject,body,status) VALUES ('blocked',2026,?,?,?,'Test','Test',?)").run(person.id,kind,person.email,status);
+    assert.equal((await call('/admin/invitations/resend',request,admin)).status,400);
+    db.prepare("DELETE FROM outbox WHERE id='blocked'").run();
+  }
+  db.prepare("UPDATE outbox SET status='uncertain' WHERE id=?").run(prior.id);
+  assert.equal((await call('/admin/invitations/resend',request,admin)).status,400);
+  db.prepare("UPDATE outbox SET status='sent' WHERE id=?").run(prior.id);
+  await call('/admin/participation',{year:2026,id:person.id,active:false},admin);
+  assert.equal((await call('/admin/invitations/resend',request,admin)).status,400);
+  await call('/admin/participation',{year:2026,id:person.id,active:true},admin);draftDraw(db,2026);lockDraw(db,2026);
+  assert.equal((await call('/admin/invitations/resend',request,admin)).status,400);
+  assert.deepEqual(db.prepare('SELECT * FROM outbox WHERE id=?').get(prior.id),prior);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM outbox WHERE kind LIKE 'invite-resend:%'").get().n,0);
+});
+
+test('preview resends send nothing and retain the same pending resend record when dispatched later',async t=>{
+  let sends=0;const {db,config,call,admin}=await fixture(t,{transport:{async sendMail(){sends++;throw new Error('No real SMTP in preview.');}}});seed(db);
+  const person=members(db,2026)[0];prepareMail(db,config,2026,'invite');db.prepare("UPDATE outbox SET status='sent' WHERE kind='invite'").run();
+  const prior=db.prepare("SELECT id FROM outbox WHERE giver=? AND kind='invite'").get(person.id);
+  const request={year:2026,confirm:'RESEND',recipient:{id:person.id,email:person.email,invitationId:prior.id}};
+  assert.equal((await call('/admin/invitations/resend',request,admin)).data.counts.preview,1);assert.equal(sends,0);
+  const resend=db.prepare("SELECT * FROM outbox WHERE kind LIKE 'invite-resend:%'").get();
+  assert.equal((await call('/admin/mail/retry',{id:resend.id},admin)).status,200);
+  db.prepare('UPDATE invite_tokens SET expires=? WHERE person_id=?').run(Date.now()-1,person.id);
+  config.emailMode='smtp';config.smtp.from='sender@example.test';
+  const messages=[],mailer=createMailer(db,config,{async sendMail(mail){messages.push(mail);return {accepted:[mail.to],rejected:[]};}});
+  await mailer.deliver(2026,{mailIds:[resend.id]});assert.equal(messages.length,1);
+  assert.ok(db.prepare('SELECT expires FROM invite_tokens WHERE person_id=?').get(person.id).expires>Date.now()+47*3600000);
+  assert.equal(db.prepare('SELECT id,status FROM outbox WHERE id=?').get(resend.id).status,'sent');
+});
+
+test('resending an address corrected before the upgrade also retires old-owner access',async t=>{
+  const {db,config,call,admin}=await fixture(t);seed(db);const person=members(db,2026)[0];
+  prepareMail(db,config,2026,'invite');db.prepare("UPDATE outbox SET status='sent' WHERE kind='invite'").run();
+  const original=db.prepare("SELECT * FROM outbox WHERE kind='invite' AND giver=?").get(person.id);
+  const owner=authFrom(await call('/redeem',{token:new URL(original.body.match(/http[^\s]+\/join#[A-Za-z0-9_-]+/)[0]).hash.slice(1)}));
+  // Simulate a contact correction made by the previous application version.
+  db.prepare('UPDATE people SET email=? WHERE id=?').run('already-corrected@example.test',person.id);
+  assert.equal((await call('/member/profile',undefined,owner)).status,200);
+  assert.equal((await call('/admin/invitations/resend',{year:2026,confirm:'RESEND',recipient:{id:person.id,email:'already-corrected@example.test',invitationId:original.id}},admin)).data.counts.preview,1);
+  assert.equal((await call('/member/profile',undefined,owner)).status,403);
+  assert.deepEqual(db.prepare('SELECT * FROM outbox WHERE id=?').get(original.id),original);
+});
+
+test('an in-flight resend blocks duplicate dispatch and address edits before any additional records are written',async t=>{
+  let started,finish;const entered=new Promise(resolve=>started=resolve),release=new Promise(resolve=>finish=resolve);
+  const transport={async sendMail(mail){started();await release;return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+  const person=members(db,2026)[0];prepareMail(db,config,2026,'invite');db.prepare("UPDATE outbox SET status='sent' WHERE kind='invite'").run();
+  const prior=db.prepare("SELECT id FROM outbox WHERE giver=? AND kind='invite'").get(person.id),body={year:2026,confirm:'RESEND',recipient:{id:person.id,email:person.email,invitationId:prior.id}};
+  const sending=call('/admin/invitations/resend',body,admin);await entered;
+  try {
+    assert.equal((await call('/admin/invitations/resend',body,admin)).status,400);
+    assert.equal((await call('/admin/people',{...person,year:2026,email:'changed@example.test'},admin)).status,400);
+    assert.equal((await call('/admin/contact',{id:person.id,year:2026,email:'changed@example.test'},admin)).status,400);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM outbox WHERE kind LIKE 'invite-resend:%'").get().n,1);
+    assert.equal(members(db,2026).find(p=>p.id===person.id).email,person.email);
+  } finally {finish();}
+  assert.equal((await sending).data.counts.sent,1);
+});
+
 test('two selected test invitations do not require completing other people or change the roster',async t=>{
   const sent=[],transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
   const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.4
+
+- Add a reviewed Resend invitation action for one person, including lost or expired invitations. Each resend issues a fresh 48-hour link, preserves saved wish lists and prior delivery records, and sends only the selected message.
+- Make corrected sent addresses eligible for the invitation picker again. Retire access issued to the previous address, preserve drafts for contact-only edits, and guard stale reviews, duplicate requests, in-flight sends and uncertain deliveries.
+
 ## 0.10.3
 
 - Keep past years inside History and block matchmaking tests for historical exchanges. Reviewing or editing past pairings preserves the active draw year.

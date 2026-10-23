@@ -11,22 +11,22 @@ export function validationDetails(validation) {
   return `<ul class="validation-checks">${validation.checks.map(c=>`<li><span aria-hidden="true">${c.passed?'✓':'!'}</span>${esc(c.label)} ${badge(c.passed?'Passed':'Needs attention',c.passed?'green':'amber')}</li>`).join('')}</ul><p class="section-note">Format checks only. Product availability and personal suitability are not checked.</p>`;
 }
 export function invitationCandidates(state) {
-  return state.people.filter(p=>p.active&&!p.validation.submitted&&['pending','preview','cancelled','new'].includes(state.outbox.find(m=>m.kind==='invite'&&m.giver===p.id)?.status||'new'));
+  return state.people.filter(p=>p.invitation.canSend);
 }
 export const canInvite=person=>Boolean(person.validation.checks.find(check=>check.key==='email')?.passed);
 export const canTestInvite=(person,state)=>canInvite(person)&&!state.outbox.some(mail=>mail.giver===person.id&&
-  (mail.kind==='invite'&&['sending','uncertain'].includes(mail.status)||mail.kind.startsWith('test-invite:')&&['pending','sending','uncertain'].includes(mail.status)));
+  (mail.kind==='invite'&&['sending','uncertain'].includes(mail.status)||(mail.kind.startsWith('test-invite:')||mail.kind.startsWith('invite-resend:'))&&['pending','sending','uncertain'].includes(mail.status)));
 export function privatePeoplePanel(state) {
   const mutable=['open','drafted'].includes(state.exchange.state);
   const pending=state.submissions.filter(p=>p.status==='pending'),active=state.people.filter(p=>p.active),inactive=state.people.filter(p=>!p.active);
   const candidates=invitationCandidates(state),missingEmail=candidates.filter(p=>!canInvite(p)).length,hasRecipients=candidates.some(canInvite);
   const table=people=>responsiveTable(['Person','Email','Invitation','Wish list','Actions'],people.map(p=>{
-    const mail=state.outbox.find(m=>m.kind==='invite'&&m.giver===p.id);
-    const invitation=p.validation.submitted?'List received':({sent:'Invited',preview:'Preview only',pending:'Waiting to send',failed:'Delivery failed',uncertain:'Check delivery',sending:'Sending',cancelled:'Not invited'}[mail?.status]||'Not invited');
+    const mail=p.invitation;
+    const invitation=mail.addressChanged?'Email changed · invite needed':p.validation.submitted?'List received':({sent:'Invited',preview:'Preview only',pending:'Waiting to send',failed:'Delivery failed',uncertain:'Check delivery',sending:'Sending',cancelled:'Not invited'}[mail.status]||'Not invited');
     const list=p.changesRequested?'Update requested':p.validation.passed?'Submitted':p.validation.submitted?'Needs attention':'Not submitted';
-    return [`<strong>${esc(p.name)}</strong>`,p.email?esc(p.email):'<span class="muted">Email needed</span>',badge(invitation,mail?.status==='sent'?'green':['failed','uncertain'].includes(mail?.status)?'amber':''),
+    return [`<strong>${esc(p.name)}</strong>`,p.email?esc(p.email):'<span class="muted">Email needed</span>',badge(invitation,mail.addressChanged?'amber':mail.status==='sent'?'green':['failed','uncertain'].includes(mail.status)?'amber':''),
       `<button class="quiet" data-action="wishlist-status" data-id="${esc(p.id)}">${esc(list)}</button>`,
-      mutable?`<button class="secondary" data-action="edit-person" data-id="${esc(p.id)}">Edit</button><button class="quiet" data-action="${p.active?'remove-person':'include-person'}" data-id="${esc(p.id)}">${p.active?'Leave out':'Include'}</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${esc(p.id)}">Update email</button>`:''
+      mutable?`<button class="secondary" data-action="edit-person" data-id="${esc(p.id)}">Edit</button>${mail.canResend?`<button class="secondary" data-action="resend-invitation" data-id="${esc(p.id)}">Resend invitation</button>`:''}<button class="quiet" data-action="${p.active?'remove-person':'include-person'}" data-id="${esc(p.id)}">${p.active?'Leave out':'Include'}</button>`:state.exchange.state==='locked'?`<button class="quiet" data-action="contact" data-id="${esc(p.id)}">Update email</button>`:''
     ];
   }),'Family members');
   return `<div class="section-heading"><div><h2>People for ${esc(state.year)}</h2><p>Add people, send invitations, then watch their lists arrive.</p></div>${mutable?'<div class="people-actions"><button class="primary" data-action="invite-people" '+(!hasRecipients?'disabled':'')+'>Send invitations</button><button class="secondary" data-action="add-person">+ Add person</button><button class="quiet" data-action="test-invitations" '+(!active.some(p=>canTestInvite(p,state))?'disabled':'')+'>Test invitations</button></div>':''}</div>
