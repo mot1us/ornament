@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { audit, findPerson, getExchange, transaction } from './database.js';
-import { checkEmailIdentity, clearChangesRequest, emailValid, invalidateDraft, mutable, normalizeEmail, retireEmailAccess } from './service.js';
+import { checkEmailIdentity, clearChangesRequest, emailValid, invalidateDraft, mutable, normalizeEmail, retireEmailAccess, assertWishlistsOpen } from './service.js';
 import { hash, secret } from './security.js';
 import { checkedWishlist, validateWishlist } from './validation.js';
 
@@ -29,6 +29,7 @@ export function submissionProfile(db,year,id) {
 }
 
 export function saveSubmission(db,year,id,input) {
+  assertWishlistsOpen(db,year);
   const values=fields(input);
   const existing=id?db.prepare('SELECT * FROM submissions WHERE id=? AND year=?').get(id,year):null;
   if (id && !existing) throw new Error('Your saved wish list could not be found.');

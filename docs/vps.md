@@ -93,9 +93,11 @@ eligibility before setting it up. Oracle's published Always Free allowance and
 service-limit table conflict; do not assume a Free Tier account can send email
 without an upgrade. Use another free SMTP relay if your account requires payment.
 
-Review addresses and messages in **Email** before explicitly sending match
-emails. Message content is hidden until you confirm **Reveal preview**. They include the recipient's name, wish list, message, and product
-links. The SMTP relay and recipients' mail providers process those contents.
+Review addresses and messages in **Delivery** before explicitly sending match
+emails. Message content is hidden until you confirm **Reveal preview**. They include the recipient's name, full wish list, message, and product
+links. Finalizing and preparing emails still allow wishlist edits. Sending match
+emails captures the latest saved lists and closes editing for everyone; their
+own lists remain viewable with a festive message. The SMTP relay and recipients' mail providers process those contents.
 The app does not install a VPS mail server.
 
 Outgoing emails identify the exchange in their subjects and explain why the

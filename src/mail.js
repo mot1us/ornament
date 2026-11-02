@@ -1,8 +1,8 @@
 import nodemailer from 'nodemailer';
 import { emailHtml, emailSender } from './email-format.js';
-import { audit } from './database.js';
+import { audit, transaction } from './database.js';
 import { validSignIn, expireSignIns } from './signin.js';
-import { makeEmail } from './service.js';
+import { makeEmail, wishlistsClosed } from './service.js';
 
 export function createMailer(db,config,providedTransport) {
   let busy = false;
@@ -55,14 +55,38 @@ export function createMailer(db,config,providedTransport) {
       if (busy) throw new Error('An email batch is already running.');
       if (config.emailMode === 'smtp' && !transport) throw new Error('Configure SMTP before sending real email.');
       busy = true;
+      let closedNow=false;
       try {
-        const rows = db.prepare("SELECT * FROM outbox WHERE year=? AND status='pending' AND (kind IN ('invite','assignment') OR kind LIKE 'revision:%' OR kind LIKE 'test-invite:%' OR kind LIKE 'invite-resend:%') ORDER BY id").all(year)
+        let rows = db.prepare("SELECT * FROM outbox WHERE year=? AND status='pending' AND (kind IN ('invite','assignment') OR kind LIKE 'revision:%' OR kind LIKE 'test-invite:%' OR kind LIKE 'invite-resend:%') ORDER BY id").all(year)
           .filter(row=>(!kind||row.kind===kind)&&(!ids||ids.includes(row.giver))&&(!mailIds||mailIds.includes(row.id)));
+        if(config.emailMode==='smtp'&&rows.some(row=>row.kind==='assignment')&&!wishlistsClosed(db,year)) {
+          transaction(db,()=>{
+            // Capture the latest lists for the whole exchange before the first network wait.
+            // Later retries keep this snapshot, including messages not sent in this batch.
+            for(const row of db.prepare("SELECT id,giver FROM outbox WHERE year=? AND kind='assignment' AND status IN ('pending','failed','preview')").all(year)) {
+              const mail=makeEmail(db,config,year,row.giver,'assignment');
+              db.prepare('UPDATE outbox SET body=?,subject=?,recipient_email=? WHERE id=?').run(mail.body,mail.subject,mail.email,row.id);
+            }
+            db.prepare('UPDATE exchanges SET wishlists_closed_at=CURRENT_TIMESTAMP WHERE year=?').run(year);
+            audit(db,'close-wishlists',{year});
+          });
+          closedNow=true;
+          rows=rows.map(row=>row.kind==='assignment'?db.prepare('SELECT * FROM outbox WHERE id=?').get(row.id):row);
+        }
         for (const row of rows) {
           await deliverRow(row);
         }
         audit(db,'email-batch',{year,mode:config.emailMode,count:rows.length});
-      } finally { busy = false; }
+      } finally {
+        // A definite rejection of every attempted match sent nothing; editing may continue.
+        // Successful or uncertain delivery keeps all lists closed, even across retries.
+        try {
+          if(closedNow&&!db.prepare("SELECT id FROM outbox WHERE year=? AND kind='assignment' AND status IN ('sent','sending','uncertain') LIMIT 1").get(year)) {
+            db.prepare("UPDATE exchanges SET wishlists_closed_at='' WHERE year=?").run(year);
+            audit(db,'reopen-wishlists-after-failed-dispatch',{year});
+          }
+        } finally { busy = false; }
+      }
     }
   };
 }

@@ -79,7 +79,7 @@ export function resetExchange(db,year,{confirm,review}) {
     db.prepare('DELETE FROM submissions WHERE year=?').run(year);
     db.prepare('DELETE FROM assignments WHERE year=?').run(year);
     db.prepare("UPDATE enrollments SET wishlist='',message='',gifts='[]',changes_requested='' WHERE year=?").run(year);
-    db.prepare("UPDATE exchanges SET state='open',history_status='provisional',allow_group_join=0 WHERE year=?").run(year);
+    db.prepare("UPDATE exchanges SET state='open',history_status='provisional',allow_group_join=0,wishlists_closed_at='' WHERE year=?").run(year);
     audit(db,'reset-exchange',{year,id,...summary(data)});
     return {ok:true};
   });

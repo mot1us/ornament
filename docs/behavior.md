@@ -173,8 +173,10 @@ participants and their email addresses, then explicitly prepares and dispatches
 invitation emails. Each invitation is bound to the member's current address,
 works once, and expires after 48 hours. Dispatch starts a fresh lifetime, including
 an explicitly reviewed retry. Issuing a new invitation replaces that person's
-previous invitation. A browser session lets them edit for 30 days; a fresh email
-sign-in works on another device or after the session expires.
+previous invitation. A browser session lasts 30 days; a fresh email sign-in works
+on another device or after the session expires. Wish lists remain editable until
+the organizer dispatches match emails, including after finalizing the draw or
+preparing messages. Sending invitations or sign-ins does not close editing.
 
 The standard People workflow uses invitations. The upgrade closes old group
 registration links and group entry sessions, while keeping saved submissions
@@ -212,14 +214,21 @@ explicit action; exports and SQLite backups include wish lists and matches.
 This is spoiler protection for an organizer who participates, not encryption
 against the VPS administrator, who controls the database.
 
-Invitation messages include the expiring invitation. Assignment messages link
-to `/join`, which requests a fresh sign-in email rather than including a reusable
-access credential. Assignment
-emails contain the recipient's name, wish list, message to the gifter, and
-product links as a snapshot taken when messages are prepared. The personal
-page shows the recipient's latest saved content. Later edits do not change
-already prepared messages. The SMTP provider and the recipient's mail provider
-process these emails; their contents are not confined to the self-hosted database.
+Invitation messages include the expiring invitation. Assignment emails contain
+the recipient's name, full wish list, message to the gifter, and product links;
+they need no extra wishlist login prompt. Budget and date appear only if set.
+The first real assignment dispatch captures the latest saved lists for every
+unsent assignment and closes editing before contacting SMTP. Previews do not
+close editing. If every attempt definitely fails, editing reopens. Successful,
+partial, or uncertain delivery keeps lists closed across retries and restarts;
+retries use the frozen snapshot. Existing successful or uncertain assignments
+also close editing on upgrade without changing their delivery records.
+
+After dispatch, participants see a festive closed-list message and can still
+view their own saved list and their match. The API also blocks stale forms and
+legacy group-owner edits, and organizers cannot request further corrections.
+The SMTP provider and the recipient's mail provider process the emails; their
+contents are not confined to the self-hosted database.
 
 Organizer authentication uses a server-side session and scrypt password hash.
 The email sign-in page at

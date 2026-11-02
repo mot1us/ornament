@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.6
+
+- Keep wish lists editable through finalization and email preparation. Capture the latest saved lists and close editing when match emails are dispatched; show a festive read-only page while preserving personal list and match access.
+- Include the full recipient list, gift links, and message in match emails without a redundant login prompt. Preserve frozen content across partial or uncertain delivery and retries; reopen editing if every first attempt definitely fails.
+
 ## 0.10.5
 
 - Add year-specific, one-way extra exclusions in Rules alongside existing partner restrictions. Adding or removing a rule clears only the unfinalized draft; saved wish lists, invitations, partners and history are preserved.

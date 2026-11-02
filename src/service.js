@@ -7,6 +7,13 @@ import { testMatchmaking } from './matching-test.js';
 
 export const emailValid = email => typeof email === 'string' && email.length <= 254 && /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(email);
 export const normalizeEmail = email => typeof email === 'string' ? email.trim().toLowerCase() : '';
+export const wishlistClosedMessage='Matches have been sent! Your wishlist is now closed. Merry Christmas—see you next year!';
+export function wishlistsClosed(db,year) {
+  return Boolean(getExchange(db,year).wishlists_closed_at||db.prepare("SELECT id FROM outbox WHERE year=? AND kind='assignment' AND status IN ('sent','sending','uncertain') LIMIT 1").get(year));
+}
+export function assertWishlistsOpen(db,year) {
+  if(wishlistsClosed(db,year))throw Object.assign(new Error(wishlistClosedMessage),{code:'WISHLISTS_CLOSED'});
+}
 export function clearChangesRequest(db,year,personId) {
   db.prepare("UPDATE enrollments SET changes_requested='' WHERE year=? AND person_id=?").run(year,personId);
   db.prepare(`UPDATE outbox SET status='cancelled',error='The participant has already submitted an updated wish list.'
@@ -273,7 +280,7 @@ export function makeEmail(db,config,year,personId,kind) {
   const gifts = recipient.gifts.map(g=>[g.label,g.url].filter(Boolean).join(': ')).join('\n');
   const message=recipient.message?`Message to you:\n${recipient.message}\n\n`:'';
   return {email:person.email,subject:`${exchange.title}: your Secret Santa match`,
-    body:`Hi ${person.name},\n\nThe draw for ${exchange.title} is complete. You are ${recipient.name}'s Secret Santa!\n\n${details}\n\nTheir wish list:\n${recipient.wishlist || 'They have not added a wish list yet.'}\n\n${message}${gifts}\n\nTo see the latest wish list, sign in to Ornament with your email:\n${link}\n\nKeep your match secret.\n\nSent by Ornament for ${exchange.title}.`};
+    body:`Hi ${person.name},\n\nThe draw for ${exchange.title} is complete. You are ${recipient.name}'s Secret Santa!\n\n${details}\n\nTheir wish list:\n${recipient.wishlist || 'Gift ideas are listed below.'}\n\n${message}${gifts}\n\nKeep your match secret. Merry Christmas!\n\nSent by Ornament for ${exchange.title}.`};
 }
 
 export function prepareMail(db,config,year,kind,ids) {

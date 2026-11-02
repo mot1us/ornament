@@ -75,6 +75,9 @@ export function openDatabase(dataDir) {
   if (!db.prepare('PRAGMA table_info(enrollments)').all().some(column=>column.name==='changes_requested')) {
     db.exec("ALTER TABLE enrollments ADD COLUMN changes_requested TEXT NOT NULL DEFAULT ''");
   }
+  if(!db.prepare('PRAGMA table_info(exchanges)').all().some(column=>column.name==='wishlists_closed_at')) {
+    db.exec("ALTER TABLE exchanges ADD COLUMN wishlists_closed_at TEXT NOT NULL DEFAULT ''");
+  }
   if (!db.prepare('PRAGMA table_info(exchanges)').all().some(column=>column.name==='allow_group_join')) {
     db.exec('ALTER TABLE exchanges ADD COLUMN allow_group_join INTEGER NOT NULL DEFAULT 0');
     // Close anonymous entry, preserving saved submissions and their owner sessions.
@@ -95,6 +98,9 @@ export function openDatabase(dataDir) {
   }
   // An interrupted SMTP transaction may have succeeded. Never automatically resend it.
   db.prepare("UPDATE outbox SET status='uncertain', error='Sending was interrupted. Check the recipient mailbox before retrying.' WHERE status='sending'").run();
+  // Existing or interrupted match deliveries also close editing after an upgrade.
+  db.prepare(`UPDATE exchanges SET wishlists_closed_at=CURRENT_TIMESTAMP WHERE wishlists_closed_at=''
+    AND EXISTS (SELECT 1 FROM outbox WHERE outbox.year=exchanges.year AND kind='assignment' AND status IN ('sent','sending','uncertain'))`).run();
   if(!db.prepare('SELECT name FROM schema_migrations WHERE name=?').get('automatic-roster-v1')) {
     transaction(db,()=>{
       db.prepare("UPDATE exchanges SET allow_group_join=0 WHERE state IN ('open','drafted')").run();

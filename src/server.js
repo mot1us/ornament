@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { openDatabase, audit, getExchange, members, transaction, importHistory } from './database.js';
 import { createExchange, savePerson, emailValid, matchingOptions, historyReadiness, mutable, invalidateDraft, draftDraw,
-  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest, setParticipation, prepareInvitations, prepareTestInvitations, isHistoricalExchange, invitationStatus, prepareInvitationResend, retireEmailAccess } from './service.js';
+  lockDraw, inviteLink, prepareMail, normalizeEmail, checkEmailIdentity, clearChangesRequest, matchingTest, setParticipation, prepareInvitations, prepareTestInvitations, isHistoricalExchange, invitationStatus, prepareInvitationResend, retireEmailAccess, wishlistsClosed, assertWishlistsOpen } from './service.js';
 import { secret, hash, passwordMatches, readConfig } from './security.js';
 import { createMailer } from './mail.js';
 import { prepareSignIn, consumeSignIn, expireSignIns } from './signin.js';
@@ -141,7 +141,7 @@ export function createApp(config,db,providedTransport) {
     const exchange = exchanges.find(e=>e.year===year) || null;
     const people = exchange ? members(db,year).map(p=>({id:p.id,name:p.name,email:p.email,aliases:p.aliases,active:p.active,
       validation:validateWishlist(p,p.email),changesRequested:p.changes_requested,invitation:invitationStatus(db,year,p)})) : [];
-    res.json({exchanges,currentYears,historyYears,year,exchange,people,identities:db.prepare('SELECT id,name,email,aliases FROM people ORDER BY name COLLATE NOCASE').all().map(p=>({...p,aliases:JSON.parse(p.aliases)})),submissions:exchange?listSubmissions(db,year):[],
+    res.json({exchanges,currentYears,historyYears,year,exchange,people,wishlistsClosed:exchange?wishlistsClosed(db,year):false,identities:db.prepare('SELECT id,name,email,aliases FROM people ORDER BY name COLLATE NOCASE').all().map(p=>({...p,aliases:JSON.parse(p.aliases)})),submissions:exchange?listSubmissions(db,year):[],
       exclusions:exchange ? matchingOptions(db,year).exclusions : [],
       extraExclusions:exchange ? db.prepare('SELECT giver,recipient FROM exclusions WHERE year=? ORDER BY giver,recipient').all(year) : [],
       partners:exchange ? db.prepare('SELECT first,second FROM partners WHERE year=? ORDER BY first').all(year) : [],
@@ -178,6 +178,7 @@ export function createApp(config,db,providedTransport) {
   });
   app.post('/api/admin/changes-request',(req,res)=>{
     const year=Number(req.body.year),exchange=getExchange(db,year),person=members(db,year).find(p=>p.id===req.body.personId);
+    assertWishlistsOpen(db,year);
     const note=typeof req.body.note==='string'?req.body.note.trim():'';
     if(!['open','drafted','locked'].includes(exchange.state)||!person?.active||!emailValid(person.email)||!note||note.length>1000)throw new Error('Choose an active person and add a correction request under 1,000 characters.');
     transaction(db,()=>{
@@ -385,7 +386,7 @@ export function createApp(config,db,providedTransport) {
   app.get('/api/group/profile',(req,res)=>{
     const {year,role,person_id:id}=req.session;
     const exchange=getExchange(db,year);
-    res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state},
+    res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state,wishlistsClosed:wishlistsClosed(db,year)},
       submission:role==='submission'?submissionProfile(db,year,id):null});
   });
   app.post('/api/group/profile',submissionLimiter,(req,res)=>{
@@ -417,11 +418,12 @@ export function createApp(config,db,providedTransport) {
       if (target) recipient={name:target.name,wishlist:target.wishlist,message:target.message,gifts:target.gifts};
     }
     const freshStart=Boolean(req.session.fresh_start);
-    res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state},freshStart,
+    res.json({exchange:{year:exchange.year,title:exchange.title,budget:exchange.budget,eventDate:exchange.event_date,state:exchange.state,wishlistsClosed:wishlistsClosed(db,year)},freshStart,
       person:{name:person.name,active:Boolean(person.active),wishlist:freshStart?'':person.wishlist,message:freshStart?'':person.message,gifts:freshStart?[]:person.gifts,changesRequested:freshStart?'':person.changes_requested},recipient});
   });
   app.post('/api/member/profile',submissionLimiter,(req,res)=>{
     const {year,person_id:id}=req.session;
+    assertWishlistsOpen(db,year);
     if (!db.prepare('SELECT person_id FROM enrollments WHERE year=? AND person_id=?').get(year,id)) throw new Error('Participant not found.');
     const current=getExchange(db,year);
     if (current.state==='archived') throw new Error('This exchange is archived.');
@@ -446,6 +448,7 @@ export function createApp(config,db,providedTransport) {
   }}));
   for (const route of ['/','/admin','/join']) app.get(route,(_req,res)=>res.sendFile(resolve(publicDir,'index.html')));
   app.use((error,_req,res,_next)=>{
+    if(error.code==='WISHLISTS_CLOSED')return res.status(409).json({error:error.message,code:error.code});
     if (error.type==='entity.parse.failed') return res.status(400).json({error:'Invalid JSON.'});
     if (error.type==='entity.too.large') return res.status(413).json({error:'The request is too large.'});
     if (error.code?.startsWith('ERR_SQLITE')) return res.status(500).json({error:'The database could not complete the request.'});

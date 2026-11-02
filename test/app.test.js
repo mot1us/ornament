@@ -873,7 +873,7 @@ test('invites, sign-ins, correction requests and matches compile into private, c
   assert.equal(db.prepare("SELECT count(*) AS count FROM outbox WHERE status='sent'").get().count,4);
 });
 
-test('a complete exchange goes from shared submissions to reviewed identities, repeat-free matches, delivery, and private edits',async t=>{
+test('a complete exchange goes from shared submissions to reviewed identities, repeat-free matches, delivery, and read-only access',async t=>{
   const sent=[];
   const transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
   const {db,config,call,admin,dir}=await fixture(t,{emailMode:'smtp',transport});
@@ -933,7 +933,7 @@ test('a complete exchange goes from shared submissions to reviewed identities, r
     assert.ok(mail);assert.equal(mail.from,'"Ornament Secret Santa" <sender@example.test>');
     for(const text of [recipient.name,recipient.wishlist,recipient.message,...recipient.gifts.flatMap(g=>[g.label,g.url])])assert.ok(mail.text.includes(text));
     for(const other of people.filter(p=>p.id!==recipient.id))assert.equal(mail.text.includes(other.wishlist),false);
-    assert.ok(mail.text.includes(`${config.publicUrl}/join`));
+    assert.equal(mail.text.includes(`${config.publicUrl}/join`),false);
     assert.equal(mail.text.includes('/join#'),false);
     const signin=prepareSignIn(db,config,giver.email);
     const personal=authFrom(await call('/redeem',{token:signInToken(db,signin).token}));
@@ -946,18 +946,103 @@ test('a complete exchange goes from shared submissions to reviewed identities, r
   assert.equal((await call('/admin/mail/send',{year:2026,confirm:'SEND'},admin)).status,200);
   assert.equal(sent.length,11);
   const owner=owners[0];
-  await submitGroup(call,owner.auth,{...owner.fields,wishlist:'Updated after the draw',message:'Please choose green'});
+  assert.equal((await call('/group/profile',{...owner.fields,wishlist:'Updated after dispatch',message:'Please choose green'},owner.auth)).status,409);
   assert.equal((await call('/member/profile',undefined,owner.auth)).status,403);
   const giverId=pairs.find(p=>p.recipient===owner.person.id).giver;
   const link=(await call('/admin/link',{year:2026,personId:giverId},admin)).data.link;
   const verified=authFrom(await call('/redeem',{token:new URL(link).hash.slice(1)}));
-  assert.equal((await call('/member/profile',undefined,verified)).data.recipient.wishlist,'Updated after the draw');
+  assert.equal((await call('/member/profile',undefined,verified)).data.recipient.wishlist,owner.fields.wishlist);
   assert.deepEqual(db.prepare('SELECT giver,recipient FROM assignments WHERE year=2026').all(),pairs);
   const reopened=openDatabase(dir);
   try {
     assert.deepEqual(reopened.prepare('SELECT giver,recipient FROM assignments WHERE year=2026').all(),pairs);
     assert.equal(reopened.prepare("SELECT count(*) AS n FROM outbox WHERE status='sent'").get().n,11);
   }finally{reopened.close();}
+});
+
+test('lists stay editable after finalization and preparation, then match dispatch freezes their latest contents and keeps views private',async t=>{
+  const sent=[],transport={async sendMail(mail){sent.push(mail);return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+  const person=members(db,2026)[0],owner=authFrom(await call('/redeem',{token:new URL(inviteLink(db,config,2026,person.id)).hash.slice(1)}));
+  const entry=await openGroup(call,admin),fields=submittedFields(person.name,person.email),groupOwner=await submitGroup(call,entry.auth,fields);
+  const id=db.prepare('SELECT id FROM submissions WHERE email=?').get(person.email).id;
+  assert.equal((await call('/admin/submissions/approve',{id,personId:person.id},admin)).status,200);
+  draftDraw(db,2026);lockDraw(db,2026);prepareMail(db,config,2026,'assignment');
+  assert.equal((await call('/member/profile',undefined,owner)).data.exchange.wishlistsClosed,false);
+  const latest={wishlist:'Latest list before sending: a green scarf and a puzzle',message:'Cotton please',gifts:[{label:'Scarf',url:'https://shop.example.test/scarf?color=green'},{label:'Puzzle',url:'https://shop.example.test/puzzle'}]};
+  assert.equal((await call('/member/profile',latest,owner)).status,200);
+  const before={lists:db.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all(),pairs:db.prepare('SELECT * FROM assignments ORDER BY year,giver').all()};
+  assert.equal((await call('/admin/mail/send',{year:2026,confirm:'SEND'},admin)).status,200);assert.equal(sent.length,10);
+  const giver=db.prepare('SELECT giver FROM assignments WHERE year=2026 AND recipient=?').get(person.id).giver,mail=sent.find(m=>m.to===members(db,2026).find(p=>p.id===giver).email);
+  for(const value of [latest.wishlist,latest.message,...latest.gifts.flatMap(g=>[g.label,g.url])])assert.ok(mail.text.includes(value));
+  assert.equal(mail.text.includes(`${config.publicUrl}/join`),false);assert.equal(mail.text.includes('Gift budget:'),false);
+  const rejected=await call('/member/profile',{...latest,wishlist:'Too late'},owner);assert.equal(rejected.status,409);assert.equal(rejected.data.code,'WISHLISTS_CLOSED');assert.match(rejected.data.error,/Merry Christmas/);
+  assert.equal((await call('/group/profile',{...fields,wishlist:'Too late'},groupOwner)).status,409);
+  assert.equal((await call('/admin/changes-request',{year:2026,personId:person.id,note:'Too late'},admin)).status,409);
+  const profile=(await call('/member/profile',undefined,owner)).data;assert.equal(profile.exchange.wishlistsClosed,true);assert.equal(profile.person.wishlist,latest.wishlist);assert.ok(profile.recipient);
+  assert.equal((await call('/group/profile',undefined,groupOwner)).data.exchange.wishlistsClosed,true);
+  assert.deepEqual(db.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all(),before.lists);assert.deepEqual(db.prepare('SELECT * FROM assignments ORDER BY year,giver').all(),before.pairs);
+});
+
+test('dispatch closes editing and snapshots every assignment before the first SMTP wait, including unsent retries',async t=>{
+  let started,finish;const entered=new Promise(resolve=>started=resolve),release=new Promise(resolve=>finish=resolve),sent=[];
+  const transport={async sendMail(mail){sent.push(mail);if(sent.length===1){started();await release;}return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+  const person=members(db,2026)[0],owner=authFrom(await call('/redeem',{token:new URL(inviteLink(db,config,2026,person.id)).hash.slice(1)}));
+  draftDraw(db,2026);lockDraw(db,2026);prepareMail(db,config,2026,'assignment');
+  const sending=call('/admin/mail/send',{year:2026,confirm:'SEND'},admin);await entered;
+  const snapshot=db.prepare("SELECT id,subject,body FROM outbox WHERE kind='assignment' ORDER BY id").all();
+  try {
+    assert.equal((await call('/member/profile',undefined,owner)).data.exchange.wishlistsClosed,true);
+    assert.equal((await call('/member/profile',{wishlist:'Racing edit',gifts:[]},owner)).status,409);
+    assert.deepEqual(db.prepare("SELECT id,subject,body FROM outbox WHERE kind='assignment' ORDER BY id").all(),snapshot);
+  }finally{finish();}
+  assert.equal((await sending).status,200);assert.equal(sent.length,10);
+  assert.deepEqual(db.prepare("SELECT id,subject,body FROM outbox WHERE kind='assignment' ORDER BY id").all(),snapshot);
+});
+
+test('preview, invitations and sign-ins do not close editing; definite failure of every first match attempt allows corrections',async t=>{
+  let fail=false;const messages=[],transport={async sendMail(mail){if(fail)throw Object.assign(new Error('Rejected'),{code:'EAUTH',responseCode:535});messages.push(mail);return {accepted:[mail.to],rejected:[]};}};
+  const {db,config,call,admin}=await fixture(t,{transport});seed(db);config.smtp.from='sender@example.test';
+  const person=members(db,2026)[0],owner=authFrom(await call('/redeem',{token:new URL(inviteLink(db,config,2026,person.id)).hash.slice(1)}));
+  prepareMail(db,config,2026,'invite');const mailer=createMailer(db,config,transport);config.emailMode='smtp';await mailer.deliver(2026);
+  const signin=prepareSignIn(db,config,person.email);await mailer.deliverSignIn(signin);
+  assert.equal((await call('/member/profile',undefined,owner)).data.exchange.wishlistsClosed,false);
+  draftDraw(db,2026);lockDraw(db,2026);prepareMail(db,config,2026,'assignment');config.emailMode='preview';
+  await mailer.deliver(2026);assert.equal((await call('/member/profile',undefined,owner)).data.exchange.wishlistsClosed,false);
+  assert.equal((await call('/member/profile',{wishlist:'After preview',gifts:[]},owner)).status,200);
+  db.prepare("UPDATE outbox SET status='pending' WHERE kind='assignment'").run();fail=true;config.emailMode='smtp';await mailer.deliver(2026);
+  assert.equal((await call('/member/profile',undefined,owner)).data.exchange.wishlistsClosed,false);
+  assert.equal((await call('/member/profile',{wishlist:'After rejected dispatch',gifts:[]},owner)).status,200);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM outbox WHERE kind='assignment' AND status='sent'").get().n,0);
+});
+
+test('partial or uncertain dispatch keeps lists closed across reviewed retries and database reopening',async t=>{
+  for(const mode of ['partial','uncertain']) {
+    let count=0;const transport={async sendMail(mail){if(mode==='partial'&&count++===0)return {accepted:[mail.to],rejected:[]};throw Object.assign(new Error('Failure'),{code:mode==='uncertain'?'ETIMEDOUT':'EAUTH',responseCode:mode==='partial'?535:undefined});}};
+    const {db,dir,config,call,admin}=await fixture(t,{emailMode:'smtp',transport});seed(db);config.smtp.from='sender@example.test';
+    const person=members(db,2026)[0],owner=authFrom(await call('/redeem',{token:new URL(inviteLink(db,config,2026,person.id)).hash.slice(1)}));
+    draftDraw(db,2026);lockDraw(db,2026);prepareMail(db,config,2026,'assignment');await createMailer(db,config,transport).deliver(2026);
+    const frozen=db.prepare("SELECT * FROM outbox WHERE kind='assignment' ORDER BY id").all();
+    assert.equal((await call('/member/profile',{wishlist:'Too late',gifts:[]},owner)).status,409);
+    for(const row of frozen.filter(m=>m.status==='uncertain'))assert.equal((await call('/admin/mail/retry',{id:row.id,confirm:'CHECKED'},admin)).status,200);
+    assert.equal((await call('/member/profile',undefined,owner)).data.exchange.wishlistsClosed,true);
+    const reopened=openDatabase(dir);try{assert.ok(reopened.prepare('SELECT wishlists_closed_at FROM exchanges WHERE year=2026').get().wishlists_closed_at);}finally{reopened.close();}
+    for(const row of frozen.filter(m=>m.status==='sent'))assert.deepEqual(db.prepare('SELECT * FROM outbox WHERE id=?').get(row.id),row);
+  }
+});
+
+test('upgrading existing match deliveries closes editing without changing lists, pairings or successful messages',async t=>{
+  const {db,dir,config}=await fixture(t);seed(db);draftDraw(db,2026);lockDraw(db,2026);prepareMail(db,config,2026,'assignment');
+  db.prepare("UPDATE outbox SET status='sent',sent_at='2026-01-01',attempts=1 WHERE kind='assignment'").run();
+  // Simulate a database from before the closure flag was introduced.
+  db.exec('ALTER TABLE exchanges DROP COLUMN wishlists_closed_at');
+  const before={lists:db.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all(),pairs:db.prepare('SELECT * FROM assignments ORDER BY year,giver').all(),mail:db.prepare('SELECT * FROM outbox ORDER BY id').all()};
+  const upgraded=openDatabase(dir);
+  try {
+    assert.ok(upgraded.prepare('SELECT wishlists_closed_at FROM exchanges WHERE year=2026').get().wishlists_closed_at);
+    assert.deepEqual(upgraded.prepare('SELECT * FROM enrollments ORDER BY year,person_id').all(),before.lists);assert.deepEqual(upgraded.prepare('SELECT * FROM assignments ORDER BY year,giver').all(),before.pairs);assert.deepEqual(upgraded.prepare('SELECT * FROM outbox ORDER BY id').all(),before.mail);
+  }finally{upgraded.close();}
 });
 
 test('review can reuse a historical identity absent from the current roster',async t=>{
@@ -1013,7 +1098,7 @@ test('the group form needs a private group link and saves without login emails o
   assert.equal((await call('/redeem',{token})).status,401);
   const initial=await call('/group/profile',undefined,auth);
   assert.deepEqual(Object.keys(initial.data).sort(),['exchange','submission']);
-  assert.deepEqual(Object.keys(initial.data.exchange).sort(),['budget','eventDate','state','title','year']);
+  assert.deepEqual(Object.keys(initial.data.exchange).sort(),['budget','eventDate','state','title','wishlistsClosed','year']);
   assert.equal(initial.data.submission,null);
   assert.equal(JSON.stringify(initial.data).includes(person.email),false);
   assert.equal((await call('/group/profile',submittedFields(),{...auth,csrf:'wrong'})).status,403);
